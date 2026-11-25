@@ -5,7 +5,8 @@
 #
 #   vm/build_kernel.sh SRC OUT [debug|fast]
 #
-# Everything the VM needs is built in (virtio, 9p, loop, ntfs) except ntfs3,
+# Everything the VM needs is built in (virtio, 9p, loop, ntfs, and xfs and
+# ext4 for fstests_iomap.sh, xfs with XFS_WARN assertions) except ntfs3,
 # which cannot be built in together with ntfs and is installed as a module
 # under OUT/modroot. Boot it with
 #   KERNEL=OUT/arch/x86/boot/bzImage MODULES=OUT/modroot/lib/modules/VERSION run_vm.sh ...
@@ -62,7 +63,9 @@ cfg -e VIRTIO -e VIRTIO_PCI -e VIRTIO_BLK -e NET_9P -e NET_9P_VIRTIO \
     -e NTFS_FS -e NTFS_FS_POSIX_ACL -e NTFS_FS_WOF_COMPRESSION -m NTFS3_FS -e NTFS3_LZX_XPRESS -e NTFS3_FS_POSIX_ACL \
     -e DEVTMPFS -e DEVTMPFS_MOUNT -e TMPFS -e FS_POSIX_ACL \
     -e FUSE_FS -e USERFAULTFD -e MAGIC_SYSRQ -e PRINTK_TIME -e MODULES \
-    -e MD -e BLK_DEV_DM -e DM_LOG_WRITES -e DM_FLAKEY
+    -e MD -e BLK_DEV_DM -e DM_LOG_WRITES -e DM_FLAKEY \
+    -e XFS_FS -e XFS_POSIX_ACL -e XFS_QUOTA -e XFS_WARN \
+    -e EXT4_FS -e EXT4_FS_POSIX_ACL -e QUOTA -e QFMT_V2
 if [ "$flavour" = debug ]; then
 	cfg -e KASAN -e KASAN_GENERIC -e KASAN_INLINE -e PROVE_LOCKING \
 	    -e DEBUG_ATOMIC_SLEEP -e DEBUG_LIST -e UBSAN -e UBSAN_BOUNDS -e UBSAN_SHIFT \
@@ -73,7 +76,7 @@ if [ "$flavour" = debug ]; then
 	    -e KFENCE -e PANIC_ON_OOPS
 fi
 make -C "$src" O="$out" CC="$cc" -s olddefconfig
-for o in NTFS_FS=y NTFS3_FS=m 9P_FS=y NET_9P_VIRTIO=y BLK_DEV_LOOP=y; do
+for o in NTFS_FS=y NTFS3_FS=m 9P_FS=y NET_9P_VIRTIO=y BLK_DEV_LOOP=y XFS_FS=y EXT4_FS=y; do
 	grep -q "^CONFIG_$o" "$out/.config" || { echo "CONFIG_$o not enabled" >&2; exit 1; }
 done
 make -C "$src" O="$out" CC="$cc" -s -j"${JOBS:-$(nproc)}" bzImage modules
