@@ -71,14 +71,8 @@ if [ -z "$PAIRS" ]; then
 	echo "### done"
 	exit 0
 fi
-# no udev in the guest: dmsetup (dm-flakey tests) would wait for it forever,
-# and "udevadm wait", which fstests runs after dmsetup create (60 s, then the
-# test is not run and its device stays), would never see the device. The
-# config sets UDEV_SETTLE_PROG and UDEV_WAIT_PROG to true for that.
+# no udev in the guest: dmsetup (dm-flakey tests) would wait for it forever
 export DM_DISABLE_UDEV=1
-# which coreutils, and does mktemp -u work (fstests' ext4 mkfs uses it)
-mktemp --version 2>&1 | head -n 1
-mktemp -u > /dev/null; echo "mktemp -u: exit status $?"
 echo "memory: $(awk '/MemTotal/{print $2 " kB"}' /proc/meminfo), cpus: $(nproc)"
 mountpoint -q /mnt || mount -t tmpfs -o size=90% tmpfs /mnt
 # check and the tests keep their temporary files in /tmp, which is the
@@ -92,6 +86,21 @@ done
 mkdir -p /mnt/xfstests
 tar -C "$FSTESTS" --exclude=.git -cf - . | tar -C /mnt/xfstests -xf -
 mkdir -p /mnt/fstests/test /mnt/fstests/scratch
+# Commands fstests finds first in PATH, for this guest:
+# - udevadm does nothing: there is no udev, and "udevadm wait", which fstests
+#   runs after dmsetup create, timed out after 60 s, so the dm-flakey tests
+#   failed or were skipped with their device left over, which kept the
+#   scratch device busy for the next tests;
+# - realpath fails quietly on an empty argument, as GNU realpath -q does:
+#   fstests runs realpath -q "$SCRATCH_LOGDEV" on every ext4 mount even
+#   without a log device, and uutils realpath (Ubuntu 26.04) prints a clap
+#   error into the test's output.
+mkdir -p /mnt/bin
+printf '#!/bin/sh\nexit 0\n' > /mnt/bin/udevadm
+printf '#!/bin/sh\nfor a; do [ -n "$a" ] || exit 1; done\nexec %s "$@"\n' \
+	"$(command -v realpath)" > /mnt/bin/realpath
+chmod +x /mnt/bin/udevadm /mnt/bin/realpath
+export PATH=/mnt/bin:$PATH
 for p in mkfs.xfs xfs_io xfs_repair mkfs.ext4 e2fsck; do
 	command -v $p > /dev/null || fail "no $p"
 done
@@ -141,8 +150,6 @@ MOUNT_OPTIONS="$mnt"
 TEST_FS_MOUNT_OPTS="$mnt"
 RECREATE_TEST_DEV=true
 RESULT_BASE=$W/fstests-results
-UDEV_SETTLE_PROG=true
-UDEV_WAIT_PROG=true
 EOF
 	cat /mnt/xfstests/local.config
 	# check mounts the test device before it recreates it
