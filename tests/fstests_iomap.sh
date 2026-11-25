@@ -73,6 +73,9 @@ if [ -z "$PAIRS" ]; then
 fi
 # no udev in the guest: dmsetup (dm-flakey tests) would wait for it forever
 export DM_DISABLE_UDEV=1
+# and hide the host's /run/udev, or libdevmapper takes udev for running and
+# prints a notice about DM_DISABLE_UDEV into the output of every dm test
+[ -d /run/udev ] && mount -t tmpfs tmpfs /run/udev
 echo "memory: $(awk '/MemTotal/{print $2 " kB"}' /proc/meminfo), cpus: $(nproc)"
 mountpoint -q /mnt || mount -t tmpfs -o size=90% tmpfs /mnt
 # check and the tests keep their temporary files in /tmp, which is the
