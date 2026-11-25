@@ -16,18 +16,63 @@
 # and section (NOTRUN is not counted) and one summary line per section.
 # Environment: FSTESTS (an xfstests tree built with fstests/patches),
 # FSTESTS_SECTIONS (comma separated, default all four), FSTESTS_TESTS
-# (replaces the computed list), FSTESTS_SECTION_TIMEOUT (seconds a section
-# may take, default 3000), FSTESTS_TEST_SIZE and FSTESTS_SCRATCH_SIZE (loop
-# devices on a tmpfs, default 2G and 3G; give the VM MEM=8G).
+# (replaces the computed list), FSTESTS_SECTION_TIMEOUT (seconds one check
+# run may take, default 3000), FSTESTS_TEST_TIMEOUT (seconds one test may
+# take before it is killed, default 900), FSTESTS_TEST_SIZE and
+# FSTESTS_SCRATCH_SIZE (loop devices on a tmpfs, default 2G and 3G; give the
+# VM MEM=8G).
 # Results: $W/fstests-results/<section>/.
+# SHARD=I/N (tests/run_reproducers.sh sets it) runs only part I of N of the
+# section and test pairs; the dmesg check runs in every part.
+# shardable
 . "$HARNESS/guest_lib.sh"
 SECTIONS=$(echo "${FSTESTS_SECTIONS:-xfs_1k,xfs_4k,ext4_1k,ext4_4k}" | tr , ' ')
 STIMEOUT=${FSTESTS_SECTION_TIMEOUT:-3000}
+TTIMEOUT=${FSTESTS_TEST_TIMEOUT:-900}
 if ! [ -x "${FSTESTS:-}/check" ]; then
 	fail "no fstests tree at '${FSTESTS:-}' (build xfstests with fstests/patches and set FSTESTS)"
 	echo "### done"
 	exit 0
 fi
+tests_for() {	# tests_for FSTYP: the computed test list, sorted
+	(cd "$FSTESTS/tests" && grep -H '^_begin_fstest' generic/[0-9]* $1/[0-9]* 2>/dev/null) |
+	awk '{
+		q = 0; io = 0; bad = 0
+		for (i = 2; i <= NF; i++) {
+			if ($i == "quick") q = 1
+			if ($i ~ /^(rw|punch|prealloc|enospc|mmap|quota|zero|collapse|insert)$/) io = 1
+			if ($i ~ /^(clone.*|dedupe|aio|fiemap|swap|encrypt|verity|casefold|idmapped|attr|acl)$/) bad = 1
+			if ($i ~ /^(dangerous.*|stress|soak|long_rw|recoveryloop)$/) bad = 1
+		}
+		sub(/:.*/, "", $1)
+		if (q && io && !bad) print $1
+	}'
+	printf 'generic/%s\n' 075 091 112 127 263 469 816 817 818
+}
+# PAIRS: "section:test" this run takes, every Nth from I
+PAIRS=
+i=0
+for sec in $SECTIONS; do
+	case $sec in
+	xfs_*) fs=xfs ;;
+	ext4_*) fs=ext4 ;;
+	*) fail "unknown section $sec"; continue ;;
+	esac
+	for t in ${FSTESTS_TESTS:-$(tests_for $fs | sort -u)}; do
+		i=$((i + 1))
+		[ -z "${SHARD:-}" ] ||
+			[ $(((i - 1) % ${SHARD#*/})) = $((${SHARD%/*} - 1)) ] || continue
+		PAIRS="$PAIRS $sec:$t"
+	done
+done
+echo "shard ${SHARD:-1/1}: $(echo $PAIRS | wc -w) of $i section and test pairs"
+if [ -z "$PAIRS" ]; then
+	dmesg_check
+	echo "### done"
+	exit 0
+fi
+# no udev in the guest: dmsetup (dm-flakey tests) would wait for it forever
+export DM_DISABLE_UDEV=1
 echo "memory: $(awk '/MemTotal/{print $2 " kB"}' /proc/meminfo), cpus: $(nproc)"
 mountpoint -q /mnt || mount -t tmpfs -o size=90% tmpfs /mnt
 # check and the tests keep their temporary files in /tmp, which is the
@@ -49,28 +94,30 @@ for p in mkfs.xfs xfs_io xfs_repair mkfs.ext4 e2fsck; do
 	command -v $p > /dev/null || fail "no $p"
 done
 mkfs.xfs -V; mkfs.ext4 -V 2>&1 | head -1
-tests_for() {	# tests_for FSTYP: the computed test list
-	(cd /mnt/xfstests/tests && grep -H '^_begin_fstest' generic/[0-9]* $1/[0-9]* 2>/dev/null) |
-	awk '{
-		q = 0; io = 0; bad = 0
-		for (i = 2; i <= NF; i++) {
-			if ($i == "quick") q = 1
-			if ($i ~ /^(rw|punch|prealloc|enospc|mmap|quota|zero|collapse|insert)$/) io = 1
-			if ($i ~ /^(clone.*|dedupe|aio|fiemap|swap|encrypt|verity|casefold|idmapped|attr|acl)$/) bad = 1
-			if ($i ~ /^(dangerous.*|stress|soak|long_rw|recoveryloop)$/) bad = 1
-		}
-		sub(/:.*/, "", $1)
-		if (q && io && !bad) print $1
-	}'
-	printf 'generic/%s\n' 075 091 112 127 263 469 816 817 818
+watchdog() {	# kill a test that runs longer than TTIMEOUT seconds
+	local pid t c
+	while sleep 30; do
+		ps -eo pid=,etimes=,args= |
+		awk -v lim="$TTIMEOUT" '$3 ~ /bash$/ && $4 ~ /^\.\/tests\/[a-z0-9]+\/[0-9]+$/ && $2 > lim { print $1, $4 }' |
+		while read -r pid t; do
+			echo "watchdog: $t ran over $TTIMEOUT s, killing it"
+			for c in $(ps -eo pid=,ppid= | awk -v p="$pid" '$2 == p { print $1 }'); do
+				pkill -KILL -P "$c"; kill -KILL "$c"
+			done
+			kill -KILL "$pid"
+		done
+	done
 }
+watchdog &
+wpid=$!
 for sec in $SECTIONS; do
+	list=$(for p in $PAIRS; do [ "${p%%:*}" = "$sec" ] && echo "${p#*:}"; done | tr '\n' ' ')
+	[ -n "$list" ] || continue
 	case $sec in
 	xfs_1k) fs=xfs; mkfs="-b size=1024"; mnt="" ;;
 	xfs_4k) fs=xfs; mkfs="-b size=4096"; mnt="" ;;
 	ext4_1k) fs=ext4; mkfs="-b 1024"; mnt="-o buffered_iomap" ;;
 	ext4_4k) fs=ext4; mkfs="-b 4096"; mnt="-o buffered_iomap" ;;
-	*) fail "unknown section $sec"; continue ;;
 	esac
 	cat > /mnt/xfstests/local.config <<EOF
 [$sec]
@@ -91,7 +138,6 @@ EOF
 	xfs) mkfs.xfs -f -q $mkfs "$tdev" ;;
 	ext4) mkfs.ext4 -F -q $mkfs "$tdev" ;;
 	esac || fail "mkfs $sec"
-	list=${FSTESTS_TESTS:-$(tests_for $fs | sort -u | tr '\n' ' ')}
 	echo "tests of $sec ($(echo $list | wc -w)): $list"
 	mark "fstests $sec"
 	t0=$SECONDS
@@ -135,6 +181,7 @@ EOF
 		diff -u /mnt/xfstests/tests/$t.out "$f" | head -n 20
 	done
 done
+kill $wpid
 dmesg | grep -m2 -E "SGI XFS with|EXT4-fs.*buffered_iomap"
 losetup -d "$tdev" "$sdev"
 dmesg_check
