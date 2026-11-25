@@ -9,7 +9,9 @@
 # shard) boot that build and each run the part of the tests that
 # tests/shard.py gives it. The run's summary page shows the base commit, the
 # patches applied and one result line per test; the logs are artifacts. In a
-# fork, enable Actions on its Actions tab first.
+# fork, enable Actions on its Actions tab first. fstests_iomap (fstests on
+# XFS and ext4) runs only when named, e.g. -f tests=fstests_iomap
+# -f flavour=fast -f shards=8.
 name: test-kernel
 run-name: "test-kernel: ${{ inputs.ref }}${{ inputs.patches != '' && ' + ' || '' }}${{ inputs.patches }} (${{ inputs.tests || 'all tests' }})"
 
@@ -122,6 +124,9 @@ jobs:
           FLAVOUR: ${{ inputs.flavour }}
           DISTRO: ${{ matrix.distro }}
           SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
+          # fstests_iomap: loop devices of 2 and 3 GiB on the guest's tmpfs
+          MEM: ${{ contains(inputs.tests, 'fstests_iomap') && '8G' || '' }}
+          TIMEOUT: ${{ contains(inputs.tests, 'fstests_iomap') && '7200' || '' }}
         run: |
           export NTFSCK="$RUNNER_TEMP/ntfsprogs-plus-root/sbin/ntfsck"
           export NTFSINFO="$RUNNER_TEMP/ntfsprogs-plus-root/bin/ntfsinfo"

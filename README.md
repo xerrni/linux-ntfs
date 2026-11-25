@@ -129,6 +129,7 @@ its usage with `--help`.
 | slab_cache_names | slab cache names stay unique with both NTFS drivers loaded |
 | fsx_parallel | xfstests' fsx, 4 instances of 40000 operations in parallel on each cluster size, then ntfsck |
 | fstests_batch | the fstests in fstests/patches (generic/816 to 818) with FSTYP=ntfs, one section per cluster size 512, 4096 and 65536; one PASS or FAIL line per test and section, results in fstests-results/ |
+| fstests_iomap | fstests on XFS and ext4 (ext4 mounted with buffered_iomap), 1k and 4k blocks, for the iomap buffered write path: the quick tests of the buffered I/O groups and the fsx tests; not run by default, only when named (an hour or more per two sections; FSTESTS_SECTIONS picks sections) |
 | ntfs3_extent_records, ntfs3_readdir_large | fs/ntfs3: attribute lists and extents, large directories (need fs/ntfs3 built as configured by build_kernel.sh) |
 
 The suites run by `tests/run_kernel_tests.sh` need a kernel with the fs/ntfs
