@@ -8,7 +8,10 @@
 # is set), the kernel source at REF of REPO in
 # $RUNNER_TEMP/ntfs with PATCHES applied (vm/apply_patches.sh), and the
 # kernel built in $RUNNER_TEMP/build through the shared compiler cache.
-# Used by ci.yml and test-kernel.yml after actions/checkout.
+# Used by ci.yml and test-kernel.yml after actions/checkout. tools: false
+# leaves out ntfsprogs-plus and xfstests (a job that only builds the
+# kernel); build: false leaves out the kernel (a job that gets it from the
+# build job's artifact, see vm/kernel_artifact.sh).
 name: kernel
 description: Install the test tools, fetch, patch and build a kernel for the reproducers
 inputs:
@@ -30,6 +33,12 @@ inputs:
   save-cache:
     description: "true: save the compiler cache after the build"
     default: "false"
+  tools:
+    description: "false: no ntfsprogs-plus and no xfstests"
+    default: "true"
+  build:
+    description: "false: no kernel source and no kernel build"
+    default: "true"
 outputs:
   sha:
     description: commit id of REF before the patches
@@ -65,6 +74,7 @@ runs:
       shell: bash
       run: test -w /dev/kvm && ls -l /dev/kvm
     - name: ntfsprogs-plus (ntfsck and ntfsinfo; mkntfs comes from ntfs-3g)
+      if: inputs.tools == 'true'
       shell: bash
       run: |
         git clone -q --depth 1 https://github.com/ntfsprogs-plus/ntfsprogs-plus.git "$RUNNER_TEMP/ntfsprogs-plus"
@@ -77,6 +87,7 @@ runs:
     # needs the xfsprogs, acl and uuid headers. A release tag, so that a
     # change in fsx shows up as a change here.
     - name: fsx (xfstests)
+      if: inputs.tools == 'true'
       shell: bash
       run: |
         git clone -q --depth 1 --branch v2026.11.10 \
@@ -91,6 +102,7 @@ runs:
     # the whole tree, for tests/fstests_batch.sh: the commit in fstests/base
     # with the fstests/patches series (tests not merged upstream yet) on top
     - name: fstests (xfstests with fstests/patches)
+      if: inputs.tools == 'true'
       shell: bash
       run: |
         git init -q "$RUNNER_TEMP/fstests"
@@ -104,6 +116,7 @@ runs:
         test -x check && test -d src
         echo "FSTESTS=$RUNNER_TEMP/fstests" >> "$GITHUB_ENV"
     - name: Kernel source
+      if: inputs.build == 'true'
       id: src
       shell: bash
       env:
@@ -116,7 +129,7 @@ runs:
         echo "sha=$(git -C "$RUNNER_TEMP/ntfs" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
         git -C "$RUNNER_TEMP/ntfs" log --oneline -1
     - name: Patches
-      if: inputs.patches != ''
+      if: inputs.build == 'true' && inputs.patches != ''
       shell: bash
       env:
         PATCHES: ${{ inputs.patches }}
@@ -124,6 +137,7 @@ runs:
         # shellcheck disable=SC2086 # one word per patch
         vm/apply_patches.sh "$RUNNER_TEMP/ntfs" $PATCHES
     - name: Compiler cache
+      if: inputs.build == 'true'
       id: ccache
       uses: actions/cache/restore@v6
       with:
@@ -131,6 +145,7 @@ runs:
         key: ccache-kernel-${{ inputs.distro }}-${{ steps.src.outputs.sha }}
         restore-keys: ccache-kernel-${{ inputs.distro }}-
     - name: Build the kernel
+      if: inputs.build == 'true'
       shell: bash
       env:
         FLAVOUR: ${{ inputs.flavour }}
@@ -144,7 +159,7 @@ runs:
     # saved right after the build: actions/cache saves only when the whole
     # job passes, and a reproducer failure would leave every run cold
     - name: Save the compiler cache
-      if: inputs.save-cache == 'true' && steps.ccache.outputs.cache-hit != 'true'
+      if: inputs.build == 'true' && inputs.save-cache == 'true' && steps.ccache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v6
       with:
         path: ~/.cache/ccache-kernel

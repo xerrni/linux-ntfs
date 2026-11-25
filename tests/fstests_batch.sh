@@ -11,9 +11,29 @@
 # ntfs-3g's mkfs.ntfs must not take over.
 # Results: $W/fstests-results/<section>/ (check.log, result.xml and
 # <test>.full and <test>.out.bad of every test).
+# SHARD=I/N (tests/run_reproducers.sh sets it) runs only part I of N of the
+# section and test pairs; the dmesg check runs in every part.
+# shardable
 . "$HARNESS/guest_lib.sh"
 TESTS=${FSTESTS_TESTS:-generic/816 generic/817 generic/818}
 SECTIONS="ntfs_512:512 ntfs_4k:4096 ntfs_64k:65536"
+# PAIRS: "section:size:test" this run takes, every Nth from I
+PAIRS=
+i=0
+for s in $SECTIONS; do
+	for t in $TESTS; do
+		i=$((i + 1))
+		[ -z "${SHARD:-}" ] ||
+			[ $(((i - 1) % ${SHARD#*/})) = $((${SHARD%/*} - 1)) ] || continue
+		PAIRS="$PAIRS $s:$t"
+	done
+done
+if [ -z "$PAIRS" ]; then
+	echo "shard $SHARD: no fstests to run"
+	dmesg_check
+	echo "### done"
+	exit 0
+fi
 if ! [ -x "${FSTESTS:-}/check" ]; then
 	fail "no fstests tree at '${FSTESTS:-}' (build xfstests with fstests/patches and set FSTESTS)"
 	echo "### done"
@@ -59,14 +79,27 @@ RESULT_BASE=$W/fstests-results
 EOF
 done > /mnt/xfstests/local.config
 cat /mnt/xfstests/local.config
-mark "fstests $TESTS"
-(cd /mnt/xfstests && ./check -R xunit $TESTS) > $W/check.out 2>&1
-echo "check exit status $?"
+section_tests() {	# SECTION: the tests of PAIRS in it
+	for p in $PAIRS; do
+		[ "${p%%:*}" = "$1" ] && echo "${p##*:}"
+	done
+}
+: > $W/check.out
+for s in $SECTIONS; do
+	s=${s%%:*}
+	stests=$(section_tests $s)
+	[ -n "$stests" ] || continue
+	mark "fstests $s:" $stests
+	(cd /mnt/xfstests && ./check -s $s -R xunit $stests) >> $W/check.out 2>&1
+	echo "check $s exit status $?"
+done
 cat $W/check.out
 # one line per test and section, from the xunit report of each section
 for s in $SECTIONS; do
 	s=${s%%:*}
-	python3 - "$W/fstests-results/$s/result.xml" "$s" $TESTS <<'EOF'
+	stests=$(section_tests $s)
+	[ -n "$stests" ] || continue
+	python3 - "$W/fstests-results/$s/result.xml" "$s" $stests <<'EOF'
 import sys
 import xml.etree.ElementTree as ET
 path, section, tests = sys.argv[1], sys.argv[2], sys.argv[3:]

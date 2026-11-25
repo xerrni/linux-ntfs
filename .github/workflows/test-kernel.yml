@@ -5,7 +5,9 @@
 #   gh workflow run test-kernel.yml -R OWNER/linux-ntfs \
 #     -f patches="https://lore.kernel.org/all/MESSAGE-ID/" -f tests="killed_write_mmap"
 # Every field has a working default (plain ntfs-next, every reproducer, Ubuntu
-# 26.04, debug kernel). The run's summary page shows the base commit, the
+# 26.04, debug kernel). One job builds the kernel; the test jobs (distro x
+# shard) boot that build and each run the part of the tests that
+# tests/shard.py gives it. The run's summary page shows the base commit, the
 # patches applied and one result line per test; the logs are artifacts. In a
 # fork, enable Actions on its Actions tab first.
 name: test-kernel
@@ -39,6 +41,10 @@ on:
         type: choice
         options: [debug, fast]
         default: debug
+      shards:
+        description: Test jobs per distribution (tests/shard.py splits the tests by run time)
+        type: number
+        default: 4
 
 permissions:
   contents: read
@@ -48,12 +54,47 @@ defaults:
     shell: bash  # also gives -o pipefail
 
 jobs:
+  build:
+    name: build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    outputs:
+      sha: ${{ steps.kernel.outputs.sha }}
+      shards: ${{ steps.shards.outputs.list }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/kernel
+        id: kernel
+        with:
+          distro: ubuntu-26.04
+          repo: ${{ inputs.repo }}
+          ref: ${{ inputs.ref }}
+          patches: ${{ inputs.patches }}
+          flavour: ${{ inputs.flavour }}
+          tools: "false"
+      - name: Pack the kernel
+        run: vm/kernel_artifact.sh pack "$RUNNER_TEMP/build" kernel.tar "$RUNNER_TEMP/ntfs"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kernel
+          path: kernel.tar
+          retention-days: 7
+      - name: Shards
+        id: shards
+        env:
+          SHARDS: ${{ inputs.shards }}
+        run: |
+          [ "$SHARDS" -ge 1 ] || { echo "shards must be 1 or more" >&2; exit 1; }
+          echo "list=[$(seq -s, 1 "$SHARDS")]" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: build
     strategy:
       fail-fast: false
       matrix:
         distro: ${{ fromJSON(inputs.distro == 'both' && '["arch", "ubuntu-26.04"]' || format('["{0}"]', inputs.distro)) }}
-    name: test (${{ matrix.distro }})
+        shard: ${{ fromJSON(needs.build.outputs.shards) }}
+    name: test (${{ matrix.distro }}, ${{ matrix.shard }}/${{ inputs.shards }})
     runs-on: ubuntu-26.04
     container:
       image: ${{ matrix.distro == 'arch' && 'archlinux:latest' || '' }}
@@ -61,23 +102,26 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: kernel
+          path: ${{ runner.temp }}/kernel
       - uses: ./.github/actions/kernel
-        id: kernel
         with:
           distro: ${{ matrix.distro }}
-          repo: ${{ inputs.repo }}
-          ref: ${{ inputs.ref }}
-          patches: ${{ inputs.patches }}
-          flavour: ${{ inputs.flavour }}
+          build: "false"
+      - name: Unpack the kernel
+        run: vm/kernel_artifact.sh unpack "$RUNNER_TEMP/kernel/kernel.tar" "$RUNNER_TEMP/build"
       - name: Reproducers
         env:
           DMESG_IGNORE: slab_common.c:111
           TESTS: ${{ inputs.tests }}
           REPO: ${{ inputs.repo }}
           REF: ${{ inputs.ref }}
-          BASE: ${{ steps.kernel.outputs.sha }}
+          BASE: ${{ needs.build.outputs.sha }}
           FLAVOUR: ${{ inputs.flavour }}
           DISTRO: ${{ matrix.distro }}
+          SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
         run: |
           export NTFSCK="$RUNNER_TEMP/ntfsprogs-plus-root/sbin/ntfsck"
           export NTFSINFO="$RUNNER_TEMP/ntfsprogs-plus-root/bin/ntfsinfo"
@@ -85,35 +129,57 @@ jobs:
           for t in $TESTS; do scripts+=("${t%.sh}.sh"); done
           rc=0
           tests/run_reproducers.sh "$RUNNER_TEMP/build" repro-out "${scripts[@]}" |
-            tee results.txt || rc=$?
+            tee "results-${{ matrix.shard }}.txt" || rc=$?
           verdict="every test passed"
           [ $rc = 0 ] || verdict="some tests failed (or did not finish)"
           {
-            echo "## Reproducers on $DISTRO: $verdict"
+            echo "## Reproducers on $DISTRO, shard $SHARD: $verdict"
             echo
             echo "Kernel: \`$REF\` of $REPO, base \`$BASE\`, $FLAVOUR build"
             echo
             echo "Commits tested, newest first (the shallow clone holds the base and the patches):"
             echo '```'
-            git -C "$RUNNER_TEMP/ntfs" log --format='%h %s' -n 50
+            cat "$RUNNER_TEMP/build/commits.txt"
             echo '```'
             echo "Results (pass and fail counts, run time, first FAIL line):"
             echo '```'
-            cat results.txt
+            cat "results-${{ matrix.shard }}.txt"
             echo '```'
-            echo "Logs: the reproducer-logs-$DISTRO artifact below."
+            echo "Logs: the reproducer-logs-$DISTRO-${{ matrix.shard }} artifact below."
           } | tee -a "$GITHUB_STEP_SUMMARY"  # the summary page and the log
           exit $rc
       - name: Logs
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: reproducer-logs-${{ matrix.distro }}
+          name: reproducer-logs-${{ matrix.distro }}-${{ matrix.shard }}
           path: |
-            results.txt
+            results-${{ matrix.shard }}.txt
             repro-out/*.log
             repro-out/*/*.log
             repro-out/*/run.out
             repro-out/*/check.out
             repro-out/*/fstests-results/
           if-no-files-found: ignore
+
+  results:
+    needs: test
+    if: ${{ !cancelled() && needs.test.result != 'skipped' }}
+    name: results
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: reproducer-logs-*
+          path: logs
+      - name: All results, one line per test and distribution
+        run: |
+          {
+            echo "## All results"
+            echo '```'
+            for d in logs/reproducer-logs-*; do
+              distro=${d#logs/reproducer-logs-}; distro=${distro%-*}
+              sed "s/^/$distro /" "$d"/results-*.txt
+            done | sort
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

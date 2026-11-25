@@ -37,9 +37,10 @@ env:
     make -C tests CFLAGS="-O2 -Wall -Werror"
     gcc -static -O2 -Wall -Werror -o "$RUNNER_TEMP/init" vm/init.c
     for f in vm/build_kernel.sh vm/run_vm.sh vm/check_patches.sh vm/kill_vm.sh \
-             vm/apply_patches.sh \
+             vm/apply_patches.sh vm/kernel_artifact.sh \
              tests/run_reproducers.sh tests/run_guest_script.sh tests/run_kernel_tests.sh \
-             tests/compare_results.py tests/set_init_size.py tests/verify_tree.py; do
+             tests/compare_results.py tests/set_init_size.py tests/verify_tree.py \
+             tests/shard.py; do
       "$f" --help > /dev/null
     done
     missing=$(grep -L "SPDX-License-Identifier: GPL-2.0-or-later" \
@@ -86,30 +87,34 @@ jobs:
       - name: Workflow (actionlint)
         run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:latest -color
 
-  ntfs-next:
+  build:
     needs: [lint, lint-ubuntu]
     if: github.event_name != 'push' || github.ref == 'refs/heads/master'
+    name: build (ntfs-next)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/kernel
+        with:
+          distro: ubuntu-26.04
+          tools: "false"
+          save-cache: "true"
+      - name: Pack the kernel
+        run: vm/kernel_artifact.sh pack "$RUNNER_TEMP/build" kernel.tar "$RUNNER_TEMP/ntfs"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kernel
+          path: kernel.tar
+          retention-days: 7
+
+  ntfs-next:
+    needs: build
     strategy:
       fail-fast: false
       matrix:
         distro: [arch, ubuntu-26.04]
         shard: [1, 2, 3, 4]
-        # balanced on run times measured on the runner (seconds): 330;
-        # 210 + 130; 90 + 65 + 40 + 35 + 33; the other 17 together about 200
-        include:
-          - shard: 1
-            tests: ntfs_compressed_stages.sh
-          - shard: 2
-            tests: sparse_cu_crafted.sh hole_fill_stale.sh
-          - shard: 3
-            tests: >-
-              sparse_cu_rw.sh stale_wb_race.sh ntfs_compressed_frag_write.sh
-              delalloc_alloc_failure.sh delalloc_zero_race.sh
-          - shard: 4
-            skip: >-
-              ntfs_compressed_stages.sh sparse_cu_crafted.sh hole_fill_stale.sh
-              sparse_cu_rw.sh stale_wb_race.sh ntfs_compressed_frag_write.sh
-              delalloc_alloc_failure.sh delalloc_zero_race.sh
     name: ntfs-next (${{ matrix.distro }}, ${{ matrix.shard }}/4)
     runs-on: ubuntu-26.04
     container:
@@ -118,22 +123,24 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: kernel
+          path: ${{ runner.temp }}/kernel
       - uses: ./.github/actions/kernel
         with:
           distro: ${{ matrix.distro }}
-          save-cache: ${{ matrix.shard == 1 }}
+          build: "false"
+      - name: Unpack the kernel
+        run: vm/kernel_artifact.sh unpack "$RUNNER_TEMP/kernel/kernel.tar" "$RUNNER_TEMP/build"
       - name: Reproducers
         env:
           DMESG_IGNORE: slab_common.c:111
-          TESTS: ${{ matrix.tests }}
-          SKIP: ${{ matrix.skip }}
+          SHARD: ${{ matrix.shard }}/4
         run: |
           export NTFSCK="$RUNNER_TEMP/ntfsprogs-plus-root/sbin/ntfsck"
           export NTFSINFO="$RUNNER_TEMP/ntfsprogs-plus-root/bin/ntfsinfo"
-          # in the workspace: upload-artifact does not find runner.temp paths
-          # inside a container job. The results job compares all shards.
-          # shellcheck disable=SC2086 # one word per script
-          tests/run_reproducers.sh "$RUNNER_TEMP/build" repro-out $TESTS |
+          tests/run_reproducers.sh "$RUNNER_TEMP/build" repro-out |
             tee results-${{ matrix.shard }}.txt || true
       - name: Logs
         if: always()

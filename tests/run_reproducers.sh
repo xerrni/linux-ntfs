@@ -14,6 +14,9 @@
 # Environment: CLUSTERS, MEM, SMP and TIMEOUT pass through to the VM. JOBS
 # (default 1) runs that many VMs at once; each takes MEM and SMP vCPUs.
 # SKIP leaves out the scripts it names (e.g. SKIP="fsx_parallel.sh").
+# SHARD=I/N runs only shard I of N of the scripts (tests/shard.py picks
+# them by run time) and passes SHARD to the guest, where a "# shardable"
+# script runs only its part.
 # Exit status 1 if any script reported a FAIL or did not finish.
 #
 # Example:
@@ -38,6 +41,12 @@ if [ -n "${SKIP:-}" ]; then
 		case " $(echo $SKIP) " in *" ${s##*/} "*) ;; *) keep+=("$s");; esac
 	done
 	set -- "${keep[@]}"
+fi
+if [ -n "${SHARD:-}" ]; then
+	mine=$(python3 "$here/shard.py" "$SHARD" "$@") || exit 2
+	# shellcheck disable=SC2086 # one word per script
+	set -- $mine
+	export GUEST_ENV="${GUEST_ENV:-} SHARD=$SHARD"
 fi
 mkdir -p "$work"
 make -s -C "$here" || exit 2	# the C helpers

@@ -1,0 +1,27 @@
+# Seconds each guest script ran in CI on ntfs-next (the slower distro),
+# for tests/shard.py. Refresh with: tests/shard.py --durations results*.txt
+ntfs_compressed_stages 456
+hole_fill_stale 338
+sparse_cu_crafted 310
+stale_wb_race 243
+delalloc_zero_race 123
+sparse_cu_rw 121
+ntfs_compressed_frag_write 55
+delalloc_alloc_failure 34
+delalloc_partial_fail 16
+delalloc_failed_write 13
+sparse_cu_read 12
+delalloc_accounting 11
+aio_dio_partial 8
+ntfs_compressed_write_errors 8
+delalloc_st_blocks 7
+keep_size_short_write 4
+killed_write_mmap 4
+ntfs_compressed_dir 4
+short_copy_stale 4
+stale_write_mapping 4
+short_write_size 3
+killed_short_write 2
+slab_cache_names 2
+fstests_batch 80
+fsx_parallel 71
