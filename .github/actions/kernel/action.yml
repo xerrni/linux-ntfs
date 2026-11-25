@@ -54,7 +54,7 @@ runs:
         pacman -Syu --noconfirm --needed qemu-base gcc make cpio python zstd xz bc bison \
           flex libelf openssl ccache perl kmod pahole ntfs-3g ntfsprogs xfsprogs autoconf \
           automake libtool pkgconf util-linux-libs gnutls libgcrypt git attr acl b4 \
-          libaio liburing libcap gawk psmisc inetutils e2fsprogs
+          libaio liburing libcap gawk psmisc inetutils e2fsprogs quota-tools fio
     - name: Packages and KVM access (Ubuntu)
       if: inputs.distro != 'arch'
       shell: bash
@@ -65,7 +65,7 @@ runs:
           dwarves ntfs-3g xfsprogs autoconf automake libtool pkg-config libblkid-dev \
           uuid-dev libgnutls28-dev libgcrypt20-dev git ca-certificates attr b4 \
           xfslibs-dev libacl1-dev libaio-dev liburing-dev libcap-dev gawk psmisc \
-          uuid-runtime e2fsprogs
+          uuid-runtime e2fsprogs quota fio
         echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
           sudo tee /etc/udev/rules.d/99-kvm4all.rules
         sudo udevadm control --reload-rules
@@ -115,6 +115,17 @@ runs:
         make -s -j"$(nproc)" > make.log 2>&1 || { tail -n 40 make.log; exit 1; }
         test -x check && test -d src
         echo "FSTESTS=$RUNNER_TEMP/fstests" >> "$GITHUB_ENV"
+    # the users fstests' permission and quota tests run as; the guest reads
+    # the runner's /etc/passwd
+    - name: fstests users
+      if: inputs.tools == 'true'
+      shell: bash
+      run: |
+        sudo=; [ "$(id -u)" = 0 ] || sudo=sudo
+        for u in fsgqa fsgqa2 123456-fsgqa; do
+          id "$u" > /dev/null 2>&1 || $sudo useradd --badname -m "$u" ||
+            $sudo useradd -m "$u" || echo "no user $u"
+        done
     - name: Kernel source
       if: inputs.build == 'true'
       id: src
