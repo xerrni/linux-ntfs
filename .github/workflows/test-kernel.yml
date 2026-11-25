@@ -163,7 +163,7 @@ jobs:
             repro-out/*.log
             repro-out/*/*.log
             repro-out/*/run.out
-            repro-out/*/check.out
+            repro-out/*/check*.out
             repro-out/*/fstests-results/
           if-no-files-found: ignore
 

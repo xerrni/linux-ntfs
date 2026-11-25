@@ -33,6 +33,11 @@ mountpoint -q /mnt || mount -t tmpfs -o size=90% tmpfs /mnt
 # check and the tests keep their temporary files in /tmp, which is the
 # host's, read-only (TMPDIR does not reach the guest scripts)
 mountpoint -q /tmp || mount -t tmpfs -o size=512m tmpfs /tmp
+# bash process substitution (<(...)), which fstests uses, needs /dev/fd,
+# and the guest's devtmpfs does not have it
+for i in fd:/proc/self/fd stdin:/proc/self/fd/0 stdout:/proc/self/fd/1 stderr:/proc/self/fd/2; do
+	[ -e /dev/${i%%:*} ] || ln -s ${i#*:} /dev/${i%%:*}
+done
 mkdir -p /mnt/xfstests
 tar -C "$FSTESTS" --exclude=.git -cf - . | tar -C /mnt/xfstests -xf -
 truncate -s "${FSTESTS_TEST_SIZE:-2G}" /mnt/test.img
@@ -81,6 +86,11 @@ RECREATE_TEST_DEV=true
 RESULT_BASE=$W/fstests-results
 EOF
 	cat /mnt/xfstests/local.config
+	# check mounts the test device before it recreates it
+	case $fs in
+	xfs) mkfs.xfs -f -q $mkfs "$tdev" ;;
+	ext4) mkfs.ext4 -F -q $mkfs "$tdev" ;;
+	esac || fail "mkfs $sec"
 	list=${FSTESTS_TESTS:-$(tests_for $fs | sort -u | tr '\n' ' ')}
 	echo "tests of $sec ($(echo $list | wc -w)): $list"
 	mark "fstests $sec"
