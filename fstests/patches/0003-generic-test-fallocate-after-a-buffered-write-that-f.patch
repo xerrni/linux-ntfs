@@ -1,4 +1,4 @@
-From 87b0d326e65c2cc0190ab455aa85d70126bdda29 Mon Sep 17 00:00:00 2001
+From 913b5d5bff990e5859647ef4fe1e98d874499cae Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 3/4] generic: test fallocate after a buffered write that
@@ -58,13 +58,13 @@ index a1fc38d8..0b031620 100644
  	      btrfs_crc32c_forged_name.py popdir.pl popattr.py \
 diff --git a/src/pwrite-short-copy.c b/src/pwrite-short-copy.c
 new file mode 100644
-index 00000000..5cba053f
+index 00000000..2f1c36a3
 --- /dev/null
 +++ b/src/pwrite-short-copy.c
 @@ -0,0 +1,101 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
-+ * Copyright (c) 2026 Ernest Borowski.  All Rights Reserved.
++ * Copyright (c) 2026 Ernest Borowski <ernest.borowski.git@proton.me>.  All Rights Reserved.
 + *
 + * Call pwrite(2) once with a source buffer that ends in an inaccessible page,
 + * so that the copy from user space stops after a given number of bytes: the
@@ -165,13 +165,13 @@ index 00000000..5cba053f
 +}
 diff --git a/tests/generic/817 b/tests/generic/817
 new file mode 100755
-index 00000000..38bf209c
+index 00000000..dff08a28
 --- /dev/null
 +++ b/tests/generic/817
 @@ -0,0 +1,83 @@
 +#! /bin/bash
 +# SPDX-License-Identifier: GPL-2.0
-+# Copyright (c) 2026 Ernest Borowski.  All Rights Reserved.
++# Copyright (c) 2026 Ernest Borowski <ernest.borowski.git@proton.me>.  All Rights Reserved.
 +#
 +# FS QA Test No. 817
 +#

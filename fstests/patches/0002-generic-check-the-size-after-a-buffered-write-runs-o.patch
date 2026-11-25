@@ -1,4 +1,4 @@
-From 89854691623939ead78b5c5301f069c5077471ff Mon Sep 17 00:00:00 2001
+From 4373981c89186a14eb0d3fb9144b76c357b7d78c Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 2/4] generic: check the size after a buffered write runs out
@@ -23,13 +23,13 @@ writes, but only checks that some data was written.
 
 diff --git a/tests/generic/816 b/tests/generic/816
 new file mode 100755
-index 00000000..8a3b8208
+index 00000000..14432f13
 --- /dev/null
 +++ b/tests/generic/816
 @@ -0,0 +1,67 @@
 +#! /bin/bash
 +# SPDX-License-Identifier: GPL-2.0
-+# Copyright (c) 2026 Ernest Borowski.  All Rights Reserved.
++# Copyright (c) 2026 Ernest Borowski <ernest.borowski.git@proton.me>.  All Rights Reserved.
 +#
 +# FS QA Test No. 816
 +#

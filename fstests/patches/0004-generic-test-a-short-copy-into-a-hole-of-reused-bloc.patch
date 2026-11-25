@@ -1,4 +1,4 @@
-From e04ea2f2b1cb11de28b276e05300e20eb21cd733 Mon Sep 17 00:00:00 2001
+From 538c1cbaedf90f63e05c8a61f7f2ada68dc6ec55 Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:31 +0100
 Subject: [PATCH 4/4] generic: test a short copy into a hole of reused blocks
@@ -18,21 +18,21 @@ compare the file with the expected contents after a remount.
 
 Link: https://lore.kernel.org/all/20261124-b4-ntfs-delalloc-fixes-v2-0-f394c800ec03@proton.me/
 ---
- tests/generic/818     | 57 +++++++++++++++++++++++++++++++++++++++++++
+ tests/generic/818     | 58 +++++++++++++++++++++++++++++++++++++++++++
  tests/generic/818.out |  2 ++
- 2 files changed, 59 insertions(+)
+ 2 files changed, 60 insertions(+)
  create mode 100755 tests/generic/818
  create mode 100644 tests/generic/818.out
 
 diff --git a/tests/generic/818 b/tests/generic/818
 new file mode 100755
-index 00000000..34a244a4
+index 00000000..97c30767
 --- /dev/null
 +++ b/tests/generic/818
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,58 @@
 +#! /bin/bash
 +# SPDX-License-Identifier: GPL-2.0
-+# Copyright (c) 2026 Ernest Borowski.  All Rights Reserved.
++# Copyright (c) 2026 Ernest Borowski <ernest.borowski.git@proton.me>.  All Rights Reserved.
 +#
 +# FS QA Test No. 818
 +#
@@ -67,7 +67,8 @@ index 00000000..34a244a4
 +file=$SCRATCH_MNT/file
 +
 +# _scratch_cycle_mount sets $ret, so the write's result is kept in $written.
-+for copy in 1000 5096 12800; do
++# Short copies that end in the first, second and third block of the write.
++for copy in $((blksz / 4)) $((blksz + blksz / 4)) $((2 * blksz + blksz / 8)); do
 +	$XFS_IO_PROG -f -c "pwrite -q -S 0xab 0 $size" -c fsync \
 +		-c "truncate 0" -c "truncate $size" \
 +		-c "pwrite -q -S 0x01 $((size - 1)) 1" $file

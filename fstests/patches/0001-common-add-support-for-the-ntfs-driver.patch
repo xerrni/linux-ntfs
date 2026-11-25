@@ -1,4 +1,4 @@
-From ddcf6f7a812d71a0e3039f65cf891408455ddca5 Mon Sep 17 00:00:00 2001
+From bb6650917146f013da6b6fa1143a9732345a2fc5 Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 1/4] common: add support for the ntfs driver
@@ -15,14 +15,17 @@ its warnings about the device geometry, pass the size to mkfs.ntfs in
 sectors and the block size as the cluster size unless MKFS_OPTIONS sets one
 (mkfs.ntfs refuses a second -c), check that mkfs.ntfs and fsck.ntfs are
 installed, and list ntfs among the filesystems without metadata journaling.
+Mount with -i by default: where ntfs-3g is installed, mount -t ntfs
+runs its mount.ntfs helper and so tests ntfs-3g instead of the kernel
+driver.
 The check keeps the generic "fsck -t ntfs -n" path, which runs ntfsck.
 ---
- common/config |  5 +++++
- common/rc     | 33 ++++++++++++++++++++++++++++++++-
- 2 files changed, 37 insertions(+), 1 deletion(-)
+ common/config | 10 ++++++++++
+ common/rc     | 37 ++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 46 insertions(+), 1 deletion(-)
 
 diff --git a/common/config b/common/config
-index 69e5d833..45271269 100644
+index 69e5d833..dab2225c 100644
 --- a/common/config
 +++ b/common/config
 @@ -335,6 +335,7 @@ export MKFS_AFS_PROG="false"
@@ -33,7 +36,19 @@ index 69e5d833..45271269 100644
  export E2FSCK_PROG=$(type -P e2fsck)
  export TUNE2FS_PROG=$(type -P tune2fs)
  export FSCK_OVERLAY_PROG=$(type -P fsck.overlay)
-@@ -550,6 +551,10 @@ _source_specific_fs()
+@@ -409,6 +410,11 @@ _common_mount_opts()
+ 	ubifs)
+ 		echo $UBIFS_MOUNT_OPTIONS
+ 		;;
++	ntfs)
++		# -i: mount the kernel driver, not the mount.ntfs helper of
++		# ntfs-3g, which handles "-t ntfs" where it is installed
++		echo "-i $NTFS_MOUNT_OPTIONS"
++		;;
+ 	*)
+ 		;;
+ 	esac
+@@ -550,6 +556,10 @@ _source_specific_fs()
  		;;
  	pvfs2)
  		;;
@@ -45,7 +60,7 @@ index 69e5d833..45271269 100644
  		[ "$UBIUPDATEVOL_PROG" = "" ] && _fatal "ubiupdatevol not found"
  		. ./common/ubifs
 diff --git a/common/rc b/common/rc
-index 750a8d83..b6163e1e 100644
+index 750a8d83..2c37bdb1 100644
 --- a/common/rc
 +++ b/common/rc
 @@ -904,6 +904,9 @@ _test_mkfs()
@@ -111,17 +126,21 @@ index 750a8d83..b6163e1e 100644
  	*)
  		_notrun "Filesystem $FSTYP not supported in _scratch_mkfs_sized"
  		;;
-@@ -1517,6 +1545,9 @@ _scratch_mkfs_blocksized()
+@@ -1517,6 +1545,13 @@ _scratch_mkfs_blocksized()
  	udf)
  		_scratch_mkfs -b $blocksize
  		;;
 +	ntfs)
-+		_scratch_mkfs -c $blocksize
++		# mkfs.ntfs refuses a second -c, so the size asked for here
++		# replaces one in MKFS_OPTIONS
++		MKFS_OPTIONS=$(echo $MKFS_OPTIONS | \
++			sed -E 's/(-c|--cluster-size)[ =]?[0-9]+//') \
++			_scratch_mkfs -c $blocksize
 +		;;
  	*)
  		_notrun "Filesystem $FSTYP not supported in _scratch_mkfs_blocksized"
  		;;
-@@ -4386,7 +4417,7 @@ _has_metadata_journaling()
+@@ -4386,7 +4421,7 @@ _has_metadata_journaling()
  	fi
  
  	case "$FSTYP" in
