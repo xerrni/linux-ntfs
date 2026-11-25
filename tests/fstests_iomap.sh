@@ -85,10 +85,6 @@ for i in fd:/proc/self/fd stdin:/proc/self/fd/0 stdout:/proc/self/fd/1 stderr:/p
 done
 mkdir -p /mnt/xfstests
 tar -C "$FSTESTS" --exclude=.git -cf - . | tar -C /mnt/xfstests -xf -
-truncate -s "${FSTESTS_TEST_SIZE:-2G}" /mnt/test.img
-truncate -s "${FSTESTS_SCRATCH_SIZE:-3G}" /mnt/scratch.img
-tdev=$(losetup -f --show /mnt/test.img)
-sdev=$(losetup -f --show /mnt/scratch.img)
 mkdir -p /mnt/fstests/test /mnt/fstests/scratch
 for p in mkfs.xfs xfs_io xfs_repair mkfs.ext4 e2fsck; do
 	command -v $p > /dev/null || fail "no $p"
@@ -113,6 +109,14 @@ wpid=$!
 for sec in $SECTIONS; do
 	list=$(for p in $PAIRS; do [ "${p%%:*}" = "$sec" ] && echo "${p#*:}"; done | tr '\n' ' ')
 	[ -n "$list" ] || continue
+	# new loop devices for every section: a test can leave the old ones
+	# busy (xfs/550 did), and then check cannot make the next section's file
+	# systems on them
+	rm -f /mnt/test-$sec.img /mnt/scratch-$sec.img
+	truncate -s "${FSTESTS_TEST_SIZE:-2G}" /mnt/test-$sec.img
+	truncate -s "${FSTESTS_SCRATCH_SIZE:-3G}" /mnt/scratch-$sec.img
+	tdev=$(losetup -f --show /mnt/test-$sec.img)
+	sdev=$(losetup -f --show /mnt/scratch-$sec.img)
 	case $sec in
 	xfs_1k) fs=xfs; mkfs="-b size=1024"; mnt="" ;;
 	xfs_4k) fs=xfs; mkfs="-b size=4096"; mnt="" ;;
@@ -138,6 +142,12 @@ EOF
 	xfs) mkfs.xfs -f -q $mkfs "$tdev" ;;
 	ext4) mkfs.ext4 -F -q $mkfs "$tdev" ;;
 	esac || fail "mkfs $sec"
+	if [ -n "$mnt" ]; then	# is the mount option in effect, and what does mount say
+		mount -t $fs $mnt "$tdev" /mnt/fstests/test
+		echo "mount $mnt: exit status $?"
+		grep " /mnt/fstests/test " /proc/mounts
+		umount /mnt/fstests/test
+	fi
 	echo "tests of $sec ($(echo $list | wc -w)): $list"
 	mark "fstests $sec"
 	t0=$SECONDS
@@ -146,6 +156,9 @@ EOF
 	echo "check $sec: exit status $rc after $((SECONDS - t0)) s"
 	[ $rc = 124 ] && fail "fstests $sec: stopped after $STIMEOUT s"
 	umount /mnt/fstests/scratch /mnt/fstests/test 2>/dev/null
+	dmsetup remove_all 2>/dev/null
+	losetup -d "$tdev" "$sdev" || echo "loop devices of $sec stay busy"
+	rm -f /mnt/test-$sec.img /mnt/scratch-$sec.img
 	tail -n 8 $W/check-$sec.out
 	python3 - "$W/fstests-results/$sec/result.xml" "$sec" $list <<'EOF'
 import sys
@@ -183,6 +196,5 @@ EOF
 done
 kill $wpid
 dmesg | grep -m2 -E "SGI XFS with|EXT4-fs.*buffered_iomap"
-losetup -d "$tdev" "$sdev"
 dmesg_check
 echo "### done"
