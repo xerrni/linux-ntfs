@@ -1,0 +1,132 @@
+From bc9d9f8337189071b71be55f2e13335b9dbb7aad Mon Sep 17 00:00:00 2001
+From: Ernest Borowski <ernest.borowski.git@proton.me>
+Date: Tue, 24 Nov 2026 00:50:18 +0100
+Subject: [PATCH 1/2] iomap: punch out a run of clean blocks in one call
+
+iomap_write_delalloc_ifs_punch() calls ->punch() once for every clean
+block of a dirty folio.  A file system that reserves delayed allocation
+space in units larger than a block can release a unit only when one call
+covers it whole.  ntfs reserves whole clusters and uses 512 byte blocks,
+so with 1 KiB clusters a buffered write into a hole that fails after
+zeroing the first cluster of a 4 KiB folio leaves the other three
+clusters of that folio reserved, and writeback later allocates them.
+
+Pass each run of contiguous clean blocks to ->punch() in one call.  XFS
+and ext4 punch any range they are given, so for them this only means
+fewer calls.
+
+"ntfs: punch out the delalloc reservation of a failed buffered write"
+later in this series needs this, so it goes to stable with it.
+
+Cc: stable@vger.kernel.org
+Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
+---
+ fs/iomap/buffered-io.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/fs/iomap/buffered-io.c b/fs/iomap/buffered-io.c
+index 6d843b168d..2eb8070e34 100644
+--- a/fs/iomap/buffered-io.c
++++ b/fs/iomap/buffered-io.c
+@@ -1364,6 +1364,9 @@ static void iomap_write_delalloc_ifs_punch(struct inode *inode,
+ 	 * blocks within a folio which are marked uptodate
+ 	 * but not dirty. In that case it is necessary to punch
+ 	 * out such blocks to avoid leaking any delalloc blocks.
++	 * Pass each run of clean blocks in one call: a file system
++	 * that reserves space in units larger than a block can only
++	 * release a unit that it sees whole.
+ 	 */
+ 	ifs = folio->private;
+ 	if (!ifs)
+@@ -1374,9 +1377,12 @@ static void iomap_write_delalloc_ifs_punch(struct inode *inode,
+ 	last_blk = offset_in_folio(folio, last_byte) >> blkbits;
+ 	while ((first_blk = ifs_next_clean_block(folio, first_blk, last_blk))
+ 		       <= last_blk) {
++		unsigned int next_blk = ifs_next_dirty_block(folio,
++				first_blk + 1, last_blk);
++
+ 		punch(inode, folio_pos(folio) + (first_blk << blkbits),
+-				1 << blkbits, iomap);
+-		first_blk++;
++				(loff_t)(next_blk - first_blk) << blkbits, iomap);
++		first_blk = next_blk;
+ 	}
+ }
+ 
+-- 
+2.56.1
+
+
+From dce497b9c0d2109258b3878e6c438eb9d30ac7d1 Mon Sep 17 00:00:00 2001
+From: Ernest Borowski <ernest.borowski.git@proton.me>
+Date: Tue, 24 Nov 2026 14:03:17 +0100
+Subject: [PATCH 2/2] iomap: add a helper to mark a range of a folio dirty
+
+A filesystem that allocates in units larger than a block may need
+writeback to write blocks that a buffered write did not copy into.  ntfs
+reserves whole clusters for delayed allocation, and after a short copy
+into a cluster that was a hole, writeback must also write the rest of
+that cluster, or the cluster shows its old contents on the disk there.
+folio_mark_dirty() marks every block of the folio dirty, so the delalloc
+release that follows no longer finds the clean blocks of the clusters
+the write did not reach and keeps them reserved: with 1 KiB and 2 KiB
+clusters, writeback then allocates a cluster that holds no data.
+
+Add iomap_dirty_folio_range(), which marks the folio and only the blocks
+covering a byte range dirty.
+
+"ntfs: zero the rest of a new cluster after a short buffered write"
+later in this series needs this, so it goes to stable with it.
+
+Cc: stable@vger.kernel.org
+Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
+---
+ fs/iomap/buffered-io.c | 19 +++++++++++++++++++
+ include/linux/iomap.h  |  1 +
+ 2 files changed, 20 insertions(+)
+
+diff --git a/fs/iomap/buffered-io.c b/fs/iomap/buffered-io.c
+index 2eb8070e34..8c8851d16f 100644
+--- a/fs/iomap/buffered-io.c
++++ b/fs/iomap/buffered-io.c
+@@ -858,6 +858,25 @@ bool iomap_dirty_folio(struct address_space *mapping, struct folio *folio)
+ }
+ EXPORT_SYMBOL_GPL(iomap_dirty_folio);
+ 
++/**
++ * iomap_dirty_folio_range - mark a range of a folio dirty
++ * @folio: the locked, uptodate folio
++ * @off: byte offset of the range in @folio
++ * @len: length of the range in bytes
++ *
++ * Mark the blocks that cover [@off, @off + @len) and @folio dirty, but none
++ * of the other blocks of @folio, so that writeback writes only those blocks.
++ */
++void iomap_dirty_folio_range(struct folio *folio, size_t off, size_t len)
++{
++	struct address_space *mapping = folio->mapping;
++
++	ifs_alloc(mapping->host, folio, 0);
++	iomap_set_range_dirty(folio, off, len);
++	filemap_dirty_folio(mapping, folio);
++}
++EXPORT_SYMBOL_GPL(iomap_dirty_folio_range);
++
+ static void
+ iomap_write_failed(struct inode *inode, loff_t pos, unsigned len)
+ {
+diff --git a/include/linux/iomap.h b/include/linux/iomap.h
+index 78a1b7603a..6a6e67b87f 100644
+--- a/include/linux/iomap.h
++++ b/include/linux/iomap.h
+@@ -445,6 +445,7 @@ struct folio *iomap_get_folio(struct iomap_iter *iter, loff_t pos, size_t len);
+ bool iomap_release_folio(struct folio *folio, gfp_t gfp_flags);
+ void iomap_invalidate_folio(struct folio *folio, size_t offset, size_t len);
+ bool iomap_dirty_folio(struct address_space *mapping, struct folio *folio);
++void iomap_dirty_folio_range(struct folio *folio, size_t off, size_t len);
+ void iomap_folio_mark_uptodate(struct folio *folio);
+ int iomap_file_unshare(struct inode *inode, loff_t pos, loff_t len,
+ 		iomap_iter_next_fn next,
+-- 
+2.56.1
+
