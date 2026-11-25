@@ -71,8 +71,14 @@ if [ -z "$PAIRS" ]; then
 	echo "### done"
 	exit 0
 fi
-# no udev in the guest: dmsetup (dm-flakey tests) would wait for it forever
+# no udev in the guest: dmsetup (dm-flakey tests) would wait for it forever,
+# and "udevadm wait", which fstests runs after dmsetup create (60 s, then the
+# test is not run and its device stays), would never see the device. The
+# config sets UDEV_SETTLE_PROG and UDEV_WAIT_PROG to true for that.
 export DM_DISABLE_UDEV=1
+# which coreutils, and does mktemp -u work (fstests' ext4 mkfs uses it)
+mktemp --version 2>&1 | head -n 1
+mktemp -u > /dev/null; echo "mktemp -u: exit status $?"
 echo "memory: $(awk '/MemTotal/{print $2 " kB"}' /proc/meminfo), cpus: $(nproc)"
 mountpoint -q /mnt || mount -t tmpfs -o size=90% tmpfs /mnt
 # check and the tests keep their temporary files in /tmp, which is the
@@ -135,6 +141,8 @@ MOUNT_OPTIONS="$mnt"
 TEST_FS_MOUNT_OPTS="$mnt"
 RECREATE_TEST_DEV=true
 RESULT_BASE=$W/fstests-results
+UDEV_SETTLE_PROG=true
+UDEV_WAIT_PROG=true
 EOF
 	cat /mnt/xfstests/local.config
 	# check mounts the test device before it recreates it
