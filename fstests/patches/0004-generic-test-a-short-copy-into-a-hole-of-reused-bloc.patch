@@ -1,4 +1,4 @@
-From ec745f317c9440336b84a744018b767114e4edba Mon Sep 17 00:00:00 2001
+From 1fb70708fd9ca3611b3f5f16b9229cff1121d455 Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:31 +0100
 Subject: [PATCH 4/4] generic: test a short copy into a hole of reused blocks

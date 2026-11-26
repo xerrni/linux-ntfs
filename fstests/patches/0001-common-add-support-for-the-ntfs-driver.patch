@@ -1,4 +1,4 @@
-From 29b86c455ad2841fc8f0160e7e9f8008212d466d Mon Sep 17 00:00:00 2001
+From f390a511194008ae724b316e279cd6763d686f4d Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 1/4] common: add support for the ntfs driver
@@ -61,7 +61,7 @@ index 69e5d833..74283f6c 100644
  		[ "$UBIUPDATEVOL_PROG" = "" ] && _fatal "ubiupdatevol not found"
  		. ./common/ubifs
 diff --git a/common/rc b/common/rc
-index 750a8d83..ae759149 100644
+index 750a8d83..06bfd0f8 100644
 --- a/common/rc
 +++ b/common/rc
 @@ -310,10 +310,16 @@ _has_dmesg_since_option()
@@ -73,7 +73,7 @@ index 750a8d83..ae759149 100644
 +
 +	# mount(8) hands an ntfs mount to a mount.ntfs helper when one is
 +	# installed; -i keeps every mount and remount on the kernel driver,
-+	# also of the base filesystem under overlayfs
++	# including the base filesystem under overlayfs
 +	[ "$FSTYP" = "ntfs" -o "$OVL_BASE_FSTYP" = "ntfs" ] && opts=(-i)
 +	$MOUNT_PROG "${opts[@]}" "$@"
  	ret=$?
