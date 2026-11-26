@@ -43,8 +43,8 @@ os.close(fd)
 print(r, os.stat(path).st_size)
 PY
 )
-	set -- "$out"
-	ret=$1 size=$2 old=$((4 * unit))
+	read -r ret size <<< "$out"
+	old=$((4 * unit))
 	echo "write of $((32 * unit)) at $old returned $ret, size $size"
 	if [ "$ret" -ge $((32 * unit)) ]; then
 		fail "$tag: the write did not run out of space (ret $ret), test setup broken"
