@@ -1,4 +1,4 @@
-From 6448ca574d74b93ca546c1f8fd2971b4e84279be Mon Sep 17 00:00:00 2001
+From 29b86c455ad2841fc8f0160e7e9f8008212d466d Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 1/4] common: add support for the ntfs driver
@@ -24,8 +24,8 @@ The check keeps the generic "fsck -t ntfs -n" path, which runs ntfsck.
 Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
 ---
  common/config |  8 ++++++++
- common/rc     | 46 ++++++++++++++++++++++++++++++++++++++++++++--
- 2 files changed, 52 insertions(+), 2 deletions(-)
+ common/rc     | 48 +++++++++++++++++++++++++++++++++++++++++++++---
+ 2 files changed, 53 insertions(+), 3 deletions(-)
 
 diff --git a/common/config b/common/config
 index 69e5d833..74283f6c 100644
@@ -61,10 +61,10 @@ index 69e5d833..74283f6c 100644
  		[ "$UBIUPDATEVOL_PROG" = "" ] && _fatal "ubiupdatevol not found"
  		. ./common/ubifs
 diff --git a/common/rc b/common/rc
-index 750a8d83..41d56be8 100644
+index 750a8d83..ae759149 100644
 --- a/common/rc
 +++ b/common/rc
-@@ -310,7 +310,13 @@ _has_dmesg_since_option()
+@@ -310,10 +310,16 @@ _has_dmesg_since_option()
  
  _mount()
  {
@@ -78,7 +78,11 @@ index 750a8d83..41d56be8 100644
 +	$MOUNT_PROG "${opts[@]}" "$@"
  	ret=$?
  	if [ "$ret" -ne 0 ]; then
- 		echo "\"$MOUNT_PROG $*\" failed at $(date)" >> "$seqres.mountfail?"
+-		echo "\"$MOUNT_PROG $*\" failed at $(date)" >> "$seqres.mountfail?"
++		echo "\"$MOUNT_PROG ${opts[*]} $*\" failed at $(date)" >> "$seqres.mountfail?"
+ 		if _has_dmesg_since_option; then
+ 			dmesg --since '30s ago' >> "$seqres.mountfail?"
+ 		else
 @@ -904,6 +910,9 @@ _test_mkfs()
      btrfs)
          $MKFS_BTRFS_PROG $MKFS_OPTIONS $* $TEST_DEV > /dev/null
@@ -151,7 +155,7 @@ index 750a8d83..41d56be8 100644
 +		# mkfs.ntfs refuses a second -c, so the size asked for here
 +		# replaces one in MKFS_OPTIONS
 +		MKFS_OPTIONS=$(echo $MKFS_OPTIONS | \
-+			sed -E 's/(-c|--cluster-size)[ =]?[0-9]+//') \
++			sed -E 's/(^| )(-c|--cluster-size)[ =]?[0-9]+//') \
 +			_scratch_mkfs -c $blocksize
 +		;;
  	*)
