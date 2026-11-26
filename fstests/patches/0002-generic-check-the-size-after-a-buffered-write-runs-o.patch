@@ -1,4 +1,4 @@
-From 7bb6010d06f71a2b1a1e6c949b79a4e2da043b0d Mon Sep 17 00:00:00 2001
+From c2e86c5d3024f0bca53085263c8d1ad4603208ce Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 2/4] generic: check the size after a buffered write runs out
@@ -19,18 +19,18 @@ space with writes, but only checks that some data was written.
 
 Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
 ---
- tests/generic/816     | 83 +++++++++++++++++++++++++++++++++++++++++++
- tests/generic/816.out |  2 ++
- 2 files changed, 85 insertions(+)
+ tests/generic/816     | 89 +++++++++++++++++++++++++++++++++++++++++++
+ tests/generic/816.out |  2 +
+ 2 files changed, 91 insertions(+)
  create mode 100755 tests/generic/816
  create mode 100644 tests/generic/816.out
 
 diff --git a/tests/generic/816 b/tests/generic/816
 new file mode 100755
-index 00000000..c22d6b01
+index 00000000..14045acb
 --- /dev/null
 +++ b/tests/generic/816
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,89 @@
 +#! /bin/bash
 +# SPDX-License-Identifier: GPL-2.0
 +# Copyright (c) 2026 Ernest Borowski <ernest.borowski.git@proton.me>.  All Rights Reserved.
@@ -39,10 +39,11 @@ index 00000000..c22d6b01
 +#
 +# A buffered write that runs out of space part way must leave the file size
 +# at the end of the bytes it wrote.  Fill a small filesystem, free a little
-+# space again, append more than that to a file in one write(2), and check that
-+# the size is the old size plus the count the write returned, before and after
-+# a remount, and that the file holds the old data followed by the bytes
-+# written.
++# space again, and write more than that to a file in one write(2) that starts
++# a little before the end of the file and goes past it.  Check that the size
++# ends at the end of the old data or of the bytes the write returned,
++# whichever is further, before and after a remount, and that the file holds
++# the old data with the bytes written over it.
 +#
 +. ./common/preamble
 +_begin_fstest auto quick rw enospc
@@ -62,6 +63,10 @@ index 00000000..c22d6b01
 +unit=$((blksz > 65536 ? blksz : 65536))
 +old=$((4 * unit))
 +len=$((32 * unit))
++# The write starts inside the old data: a filesystem that reserves space for
++# all of a new range at once, as XFS does, then still stores the part over
++# allocated blocks and comes up short instead of failing with nothing written.
++pos=$((old - unit))
 +file=$SCRATCH_MNT/file
 +
 +$XFS_IO_PROG -f -c "pwrite -q -S 0x11 0 $old" -c fsync $file
@@ -71,11 +76,11 @@ index 00000000..c22d6b01
 +_scratch_sync
 +$DF_PROG $SCRATCH_MNT >> $seqres.full
 +
-+# One write(2) of $len bytes at the end of the file.  xfs_io prints the count
++# One write(2) of $len bytes at $pos.  xfs_io prints the count
 +# the write returned, or the error when the write failed.  ENOSPC before the
 +# first byte is checked like a short write of zero bytes, any other error
 +# fails the test.
-+$XFS_IO_PROG -c "pwrite -S 0x22 -b $len $old $len" $file > $tmp.write 2>&1
++$XFS_IO_PROG -c "pwrite -S 0x22 -b $len $pos $len" $file > $tmp.write 2>&1
 +cat $tmp.write >> $seqres.full
 +written=$(sed -n -e 's/^wrote \([0-9]*\)\/.*/\1/p' $tmp.write)
 +if [ -z "$written" ]; then
@@ -85,13 +90,14 @@ index 00000000..c22d6b01
 +fi
 +[ $written -lt $len ] || _notrun "could not run the filesystem out of space"
 +
++end=$((pos + written > old ? pos + written : old))
 +errors=0
 +check_size()
 +{
 +	local size=$(_get_filesize $file)
 +
-+	[ $size -eq $((old + written)) ] && return
-+	echo "$1: size $size after writing $written bytes at $old"
++	[ $size -eq $end ] && return
++	echo "$1: size $size after writing $written bytes at $pos"
 +	errors=$((errors + 1))
 +}
 +
@@ -101,7 +107,7 @@ index 00000000..c22d6b01
 +
 +$XFS_IO_PROG -f -c "pwrite -q -S 0x11 0 $old" $tmp.expected
 +[ $written -gt 0 ] && \
-+	$XFS_IO_PROG -c "pwrite -q -S 0x22 $old $written" $tmp.expected
++	$XFS_IO_PROG -c "pwrite -q -S 0x22 $pos $written" $tmp.expected
 +if ! cmp -s $file $tmp.expected; then
 +	echo "file contents differ"
 +	errors=$((errors + 1))
