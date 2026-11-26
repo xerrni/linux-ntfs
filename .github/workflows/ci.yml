@@ -81,9 +81,11 @@ jobs:
       - name: Packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc make libc6-dev python3
+          sudo apt-get install -y --no-install-recommends gcc make libc6-dev python3 shellcheck
       - name: Lint
         run: bash -c "$LINT"
+      - name: Shell scripts (shellcheck)
+        run: shellcheck --version && shellcheck -x vm/*.sh tests/*.sh
       - name: Workflow (actionlint)
         run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:latest -color
 

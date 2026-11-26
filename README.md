@@ -170,7 +170,11 @@ Locally the same steps are `vm/apply_patches.sh`,
 ## CI
 
 `.github/workflows/ci.yml` lints on Arch Linux, Fedora, Debian testing and
-Ubuntu 26.04 on every push and pull request. The `ntfs-next` jobs build
+Ubuntu 26.04 on every push and pull request. The Ubuntu lint job also runs
+`shellcheck -x vm/*.sh tests/*.sh`, which must stay clean: a warning kept
+on purpose gets `# shellcheck disable=SCxxxx # <reason>` above its line.
+`.shellcheckrc` only says that the guest scripts, which have no shebang,
+are bash and that sourced files sit next to the script. The `ntfs-next` jobs build
 ntfs-next as a debug kernel and run the reproducers under KVM on Arch Linux
 and on Ubuntu 26.04, split over four runners per distribution. The results
 job of each distribution fails when a result differs from
