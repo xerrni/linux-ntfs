@@ -1,4 +1,4 @@
-From c2e86c5d3024f0bca53085263c8d1ad4603208ce Mon Sep 17 00:00:00 2001
+From 6ad69750f52664a61092b5ecd8c5122b24df24d7 Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 2/4] generic: check the size after a buffered write runs out
@@ -10,9 +10,13 @@ the size to the end of the whole request before it copies anything and
 keeps it after the copy stops early, so the file grows by a tail of zeroes
 that the caller never wrote; "ntfs: trim the sizes after a short write" by
 Zhan Xusheng, under review on the ntfs list, fixes that. Fill a 512 MiB
-filesystem, free 256 KiB or more again, append eight times as much to a
-file in one write(2), and check the size before and after a remount and the
-contents of the file. A write error other than ENOSPC fails the test, and a
+filesystem, free 256 KiB or more again, write eight times as much to a file
+in one write(2) that starts 64 KiB or one block before the end of the file,
+and check the size before and after a remount and the contents of the file.
+XFS and ext4 reserve space for all of a new range at once, so a write that
+started at the end of the file failed there with nothing written; this one
+stores the part over the old data and comes up short. A write error other
+than ENOSPC fails the test, and a
 write that fails with ENOSPC before storing anything is checked the same
 way but then reported as not run. generic/275 also runs a filesystem out of
 space with writes, but only checks that some data was written.
