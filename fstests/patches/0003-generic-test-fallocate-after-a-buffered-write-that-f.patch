@@ -1,4 +1,4 @@
-From a35e0a1ca10cdbcc1f9a33145bea94cd7fed7847 Mon Sep 17 00:00:00 2001
+From 003e216ae9bdd82f9bcbe92d722e1b7768e9730d Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 3/4] generic: test fallocate after a buffered write that
@@ -167,7 +167,7 @@ index 00000000..2f1c36a3
 +}
 diff --git a/tests/generic/817 b/tests/generic/817
 new file mode 100755
-index 00000000..dff08a28
+index 00000000..2c20293b
 --- /dev/null
 +++ b/tests/generic/817
 @@ -0,0 +1,83 @@
@@ -198,10 +198,10 @@ index 00000000..dff08a28
 +_require_xfs_io_command "fcollapse"
 +_require_xfs_io_command "finsert"
 +
-+_scratch_mkfs >> $seqres.full 2>&1
++_scratch_mkfs >> "$seqres.full" 2>&1
 +_scratch_mount
 +
-+blksz=$(_get_file_block_size $SCRATCH_MNT)
++blksz=$(_get_file_block_size "$SCRATCH_MNT")
 +unit=$((blksz > 65536 ? blksz : 65536))
 +size=$((16 * unit))
 +piece=$((2 * unit))
@@ -209,46 +209,46 @@ index 00000000..dff08a28
 +# Data in other files, so that blocks a broken mapping points to are not zero.
 +for i in 1 2 3 4; do
 +	$XFS_IO_PROG -f -c "pwrite -q -S 0x3$i 0 $((8 * unit))" \
-+		$SCRATCH_MNT/other$i
++		"$SCRATCH_MNT/other$i"
 +done
 +_scratch_sync
 +
 +for op in none punch collapse insert write; do
 +	file=$SCRATCH_MNT/$op
-+	$XFS_IO_PROG -f -c "truncate $size" -c fsync $file
++	$XFS_IO_PROG -f -c "truncate $size" -c fsync "$file"
 +
 +	# EFAULT is errno 14
-+	ret=$($here/src/pwrite-short-copy $file 0 $((size / 2)) 0)
++	ret=$("$here/src/pwrite-short-copy" "$file" 0 $((size / 2)) 0)
 +	[ "$ret" = "-14" ] || \
 +		echo "$op: write from an unreadable buffer returned $ret"
 +
 +	newsize=$size
 +	case $op in
 +	punch)
-+		$XFS_IO_PROG -c "fpunch $piece $piece" $file
++		$XFS_IO_PROG -c "fpunch $piece $piece" "$file"
 +		;;
 +	collapse)
-+		$XFS_IO_PROG -c "fcollapse $piece $piece" $file
++		$XFS_IO_PROG -c "fcollapse $piece $piece" "$file"
 +		newsize=$((size - piece))
 +		;;
 +	insert)
-+		$XFS_IO_PROG -c "finsert $piece $piece" $file
++		$XFS_IO_PROG -c "finsert $piece $piece" "$file"
 +		newsize=$((size + piece))
 +		;;
 +	write)
-+		$XFS_IO_PROG -c "pwrite -q -S 0x77 $piece $unit" $file
++		$XFS_IO_PROG -c "pwrite -q -S 0x77 $piece $unit" "$file"
 +		;;
 +	esac
 +
-+	$XFS_IO_PROG -f -c "truncate $newsize" $tmp.$op
-+	[ $op = write ] && \
-+		$XFS_IO_PROG -c "pwrite -q -S 0x77 $piece $unit" $tmp.$op
++	$XFS_IO_PROG -f -c "truncate $newsize" "$tmp.$op"
++	[ "$op" = write ] && \
++		$XFS_IO_PROG -c "pwrite -q -S 0x77 $piece $unit" "$tmp.$op"
 +done
 +
 +# Read everything back from the disk.
 +_scratch_cycle_mount
 +for op in none punch collapse insert write; do
-+	cmp -s $SCRATCH_MNT/$op $tmp.$op || \
++	cmp -s "$SCRATCH_MNT/$op" "$tmp.$op" || \
 +		echo "$op: file contents differ after the failed write"
 +done
 +
