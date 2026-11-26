@@ -1,4 +1,4 @@
-From 6ad69750f52664a61092b5ecd8c5122b24df24d7 Mon Sep 17 00:00:00 2001
+From 418551ab4c012392471b628fbc7e5f1ad985b43d Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 2/4] generic: check the size after a buffered write runs out
@@ -23,18 +23,18 @@ space with writes, but only checks that some data was written.
 
 Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
 ---
- tests/generic/816     | 89 +++++++++++++++++++++++++++++++++++++++++++
+ tests/generic/816     | 90 +++++++++++++++++++++++++++++++++++++++++++
  tests/generic/816.out |  2 +
- 2 files changed, 91 insertions(+)
+ 2 files changed, 92 insertions(+)
  create mode 100755 tests/generic/816
  create mode 100644 tests/generic/816.out
 
 diff --git a/tests/generic/816 b/tests/generic/816
 new file mode 100755
-index 00000000..14045acb
+index 00000000..6353ded7
 --- /dev/null
 +++ b/tests/generic/816
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,90 @@
 +#! /bin/bash
 +# SPDX-License-Identifier: GPL-2.0
 +# Copyright (c) 2026 Ernest Borowski <ernest.borowski.git@proton.me>.  All Rights Reserved.
@@ -60,10 +60,10 @@ index 00000000..14045acb
 +_require_scratch
 +_require_no_compress
 +
-+_scratch_mkfs_sized $((512 * 1024 * 1024)) >> $seqres.full 2>&1
++_scratch_mkfs_sized $((512 * 1024 * 1024)) >> "$seqres.full" 2>&1
 +_scratch_mount
 +
-+blksz=$(_get_file_block_size $SCRATCH_MNT)
++blksz=$(_get_file_block_size "$SCRATCH_MNT")
 +unit=$((blksz > 65536 ? blksz : 65536))
 +old=$((4 * unit))
 +len=$((32 * unit))
@@ -73,34 +73,35 @@ index 00000000..14045acb
 +pos=$((old - unit))
 +file=$SCRATCH_MNT/file
 +
-+$XFS_IO_PROG -f -c "pwrite -q -S 0x11 0 $old" -c fsync $file
-+$XFS_IO_PROG -f -c "pwrite -q -S 0x33 0 $old" -c fsync $SCRATCH_MNT/spare
-+_fill_fs $((64 * 1024 * 1024)) $SCRATCH_MNT/fill $blksz 0 >> $seqres.full 2>&1
-+rm -f $SCRATCH_MNT/spare
++$XFS_IO_PROG -f -c "pwrite -q -S 0x11 0 $old" -c fsync "$file"
++$XFS_IO_PROG -f -c "pwrite -q -S 0x33 0 $old" -c fsync "$SCRATCH_MNT/spare"
++_fill_fs $((64 * 1024 * 1024)) "$SCRATCH_MNT/fill" "$blksz" 0 >> "$seqres.full" 2>&1
++rm -f "$SCRATCH_MNT/spare"
 +_scratch_sync
-+$DF_PROG $SCRATCH_MNT >> $seqres.full
++$DF_PROG "$SCRATCH_MNT" >> "$seqres.full"
 +
 +# One write(2) of $len bytes at $pos.  xfs_io prints the count
 +# the write returned, or the error when the write failed.  ENOSPC before the
 +# first byte is checked like a short write of zero bytes, any other error
 +# fails the test.
-+$XFS_IO_PROG -c "pwrite -S 0x22 -b $len $pos $len" $file > $tmp.write 2>&1
-+cat $tmp.write >> $seqres.full
-+written=$(sed -n -e 's/^wrote \([0-9]*\)\/.*/\1/p' $tmp.write)
++$XFS_IO_PROG -c "pwrite -S 0x22 -b $len $pos $len" "$file" > "$tmp.write" 2>&1
++cat "$tmp.write" >> "$seqres.full"
++written=$(sed -n -e 's/^wrote \([0-9]*\)\/.*/\1/p' "$tmp.write")
 +if [ -z "$written" ]; then
-+	grep -q "No space left on device" $tmp.write || \
-+		_fail "write failed: $(cat $tmp.write)"
++	grep -q "No space left on device" "$tmp.write" || \
++		_fail "write failed: $(cat "$tmp.write")"
 +	written=0
 +fi
-+[ $written -lt $len ] || _notrun "could not run the filesystem out of space"
++[ "$written" -lt "$len" ] || _notrun "could not run the filesystem out of space"
 +
 +end=$((pos + written > old ? pos + written : old))
 +errors=0
 +check_size()
 +{
-+	local size=$(_get_filesize $file)
++	local size
 +
-+	[ $size -eq $end ] && return
++	size=$(_get_filesize "$file")
++	[ "$size" -eq "$end" ] && return
 +	echo "$1: size $size after writing $written bytes at $pos"
 +	errors=$((errors + 1))
 +}
@@ -109,17 +110,17 @@ index 00000000..14045acb
 +_scratch_cycle_mount
 +check_size "after remount"
 +
-+$XFS_IO_PROG -f -c "pwrite -q -S 0x11 0 $old" $tmp.expected
-+[ $written -gt 0 ] && \
-+	$XFS_IO_PROG -c "pwrite -q -S 0x22 $pos $written" $tmp.expected
-+if ! cmp -s $file $tmp.expected; then
++$XFS_IO_PROG -f -c "pwrite -q -S 0x11 0 $old" "$tmp.expected"
++[ "$written" -gt 0 ] && \
++	$XFS_IO_PROG -c "pwrite -q -S 0x22 $pos $written" "$tmp.expected"
++if ! cmp -s "$file" "$tmp.expected"; then
 +	echo "file contents differ"
 +	errors=$((errors + 1))
 +fi
 +
 +# A write that failed before storing anything must not change the file either,
 +# but it did not test a short write.
-+[ $written -eq 0 -a $errors -eq 0 ] && \
++[ "$written" -eq 0 ] && [ "$errors" -eq 0 ] && \
 +	_notrun "the write failed with ENOSPC before storing anything"
 +
 +echo "Silence is golden"
