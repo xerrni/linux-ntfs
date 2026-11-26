@@ -1,4 +1,4 @@
-From 913b5d5bff990e5859647ef4fe1e98d874499cae Mon Sep 17 00:00:00 2001
+From 4044e88f1621d852da928beb76283de5088c11cb Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 3/4] generic: test fallocate after a buffered write that
@@ -20,6 +20,7 @@ src/pwrite-short-copy calls pwrite(2) once from a buffer whose readable
 part ends a given number of bytes in, and prints what it returned.
 
 Link: https://lore.kernel.org/all/20261124-b4-ntfs-delalloc-fixes-v2-0-f394c800ec03@proton.me/
+Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
 ---
  .gitignore              |   1 +
  src/Makefile            |   2 +-
