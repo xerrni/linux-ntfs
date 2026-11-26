@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Guest script (run with run_guest_script.sh): fstests with FSTYP=ntfs on
 # the kernel driver, by default the tests of fstests/patches (generic/816,
-# 817 and 818), in one section per cluster size (512, 4096 and 65536), then
-# a dmesg check. Prints one PASS or FAIL line per test and section; a test
+# 817 and 818), in one section per cluster size (512, 4096 and 65536) and
+# one with 4096 byte sectors and clusters (mkfs.ntfs -s 4096, which changes
+# the unit of the size _scratch_mkfs_sized passes), then a dmesg check. Prints one PASS or FAIL line per test and section; a test
 # that fstests did not run ("not run") is a FAIL too.
 # Environment: FSTESTS (an xfstests tree built with fstests/patches
 # applied), FSTESTS_TESTS (the tests to run, default "generic/816
@@ -16,7 +17,8 @@
 # shardable
 . "$HARNESS/guest_lib.sh"
 TESTS=${FSTESTS_TESTS:-generic/816 generic/817 generic/818}
-SECTIONS="ntfs_512:512 ntfs_4k:4096 ntfs_64k:65536"
+# SECTIONS: "name:cluster size[:sector size]"
+SECTIONS="ntfs_512:512 ntfs_4k:4096 ntfs_64k:65536 ntfs_s4k:4096:4096"
 # PAIRS: "section:size:test" this run takes, every Nth from I
 PAIRS=
 i=0
@@ -65,6 +67,10 @@ mkfs.ntfs -Q -F -q "$tdev" > /dev/null
 # every section sets every option: check carries options over from the
 # section before only in some cases
 for s in $SECTIONS; do
+	sizes=${s#*:}
+	cluster=${sizes%%:*}
+	sector=
+	[ "$sizes" = "$cluster" ] || sector=${sizes#*:}
 	cat <<EOF
 [${s%%:*}]
 FSTYP=ntfs
@@ -72,7 +78,7 @@ TEST_DEV=$tdev
 TEST_DIR=/mnt/fstests/test
 SCRATCH_DEV=$sdev
 SCRATCH_MNT=/mnt/fstests/scratch
-MKFS_OPTIONS="-c ${s#*:}"
+MKFS_OPTIONS="-c $cluster${sector:+ -s $sector}"
 RECREATE_TEST_DEV=true
 RESULT_BASE=$W/fstests-results
 

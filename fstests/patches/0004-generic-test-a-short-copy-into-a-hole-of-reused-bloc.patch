@@ -1,4 +1,4 @@
-From 538c1cbaedf90f63e05c8a61f7f2ada68dc6ec55 Mon Sep 17 00:00:00 2001
+From eeefd1a17518e27e32e665edf08b34c4adfe703f Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:31 +0100
 Subject: [PATCH 4/4] generic: test a short copy into a hole of reused blocks
@@ -11,25 +11,30 @@ reads return what the reused clusters held before. On ntfs the rest of the
 cluster read back the old file contents after an fsync and a remount, with
 4 KiB and with 64 KiB clusters; the fix is "ntfs: zero the rest of a new
 cluster after a short buffered write" from the ntfs delayed allocation
-series, not merged yet. Free the blocks of a filled file by truncating it
-to zero and back, write its last byte, write two and a half blocks into the
-hole from a buffer that is readable for 1000, 5096 or 12800 bytes, and
-compare the file with the expected contents after a remount.
+series, not merged yet. Fill a 512 MiB filesystem with data, so that the
+blocks the hole gets held data before, free the blocks of a filled file by
+truncating it to zero and back, write its last byte, write two and a half
+blocks into the hole from a buffer whose readable part ends in the first,
+second or third block, and compare the file with the expected contents
+after a remount. The write has to return a count between one and the
+readable length. The test does not run with the discard mount option,
+which may zero the freed blocks.
 
 Link: https://lore.kernel.org/all/20261124-b4-ntfs-delalloc-fixes-v2-0-f394c800ec03@proton.me/
+Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
 ---
- tests/generic/818     | 58 +++++++++++++++++++++++++++++++++++++++++++
- tests/generic/818.out |  2 ++
- 2 files changed, 60 insertions(+)
+ tests/generic/818     | 87 +++++++++++++++++++++++++++++++++++++++++++
+ tests/generic/818.out |  2 +
+ 2 files changed, 89 insertions(+)
  create mode 100755 tests/generic/818
  create mode 100644 tests/generic/818.out
 
 diff --git a/tests/generic/818 b/tests/generic/818
 new file mode 100755
-index 00000000..97c30767
+index 00000000..c43900f5
 --- /dev/null
 +++ b/tests/generic/818
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,87 @@
 +#! /bin/bash
 +# SPDX-License-Identifier: GPL-2.0
 +# Copyright (c) 2026 Ernest Borowski <ernest.borowski.git@proton.me>.  All Rights Reserved.
@@ -42,11 +47,12 @@ index 00000000..97c30767
 +# the disk.  The blocks the hole gets may have held data before, so a block
 +# that is allocated but only partly written would expose that old data.
 +#
-+# Fill a file and fsync it, truncate it to zero and back to its size so that
-+# its old blocks are free again, write its last byte, then write two and a
-+# half blocks at a block boundary from a buffer with only part of it readable.
-+# After an fsync and a remount the file must hold the bytes the write returned
-+# and zeroes around them.
++# Fill a small filesystem with data, so that every block the hole can get held
++# data before.  Then fill a file and fsync it, truncate it to zero and back to
++# its size so that its old blocks are free again, write its last byte, and
++# write two and a half blocks at a block boundary from a buffer with only part
++# of it readable.  After an fsync and a remount the file must hold the bytes
++# the write returned and zeroes around them.
 +#
 +. ./common/preamble
 +_begin_fstest auto quick rw
@@ -55,9 +61,14 @@ index 00000000..97c30767
 +	"ntfs: zero the rest of a new cluster after a short buffered write"
 +
 +_require_scratch
++# Compressed data would not fill the filesystem.
++_require_no_compress
 +_require_test_program "pwrite-short-copy"
++# Online discard can make freed blocks read back as zeroes, which hides the
++# missing zeroing.
++_exclude_scratch_mount_option "discard"
 +
-+_scratch_mkfs >> $seqres.full 2>&1
++_scratch_mkfs_sized $((512 * 1024 * 1024)) >> $seqres.full 2>&1
 +_scratch_mount
 +
 +blksz=$(_get_file_block_size $SCRATCH_MNT)
@@ -66,22 +77,45 @@ index 00000000..97c30767
 +len=$((2 * blksz + blksz / 2))
 +file=$SCRATCH_MNT/file
 +
++# Write until ENOSPC, in large and then in single blocks, so that the only free
++# space left is what the file and the spare file free again.  _fill_fs is not
++# used, as it may preallocate, which writes no data.  The syncs let delayed
++# allocation give back what it reserved, so that the next pass writes it.
++$XFS_IO_PROG -f -c "pwrite -q -S 0xab 0 $size" -c fsync $file
++$XFS_IO_PROG -f -c "pwrite -q -S 0x33 0 $((2 * size))" -c fsync \
++	$SCRATCH_MNT/spare
++$XFS_IO_PROG -f -c "pwrite -S 0xcd -b 1m 0 512m" $SCRATCH_MNT/fill1 \
++	>> $seqres.full 2>&1
++_scratch_sync
++$XFS_IO_PROG -f -c "pwrite -S 0xcd -b $blksz 0 512m" $SCRATCH_MNT/fill2 \
++	>> $seqres.full 2>&1
++_scratch_sync
++rm -f $SCRATCH_MNT/spare
++_scratch_sync
++$DF_PROG $SCRATCH_MNT >> $seqres.full
++
 +# _scratch_cycle_mount sets $ret, so the write's result is kept in $written.
 +# Short copies that end in the first, second and third block of the write.
 +for copy in $((blksz / 4)) $((blksz + blksz / 4)) $((2 * blksz + blksz / 8)); do
 +	$XFS_IO_PROG -f -c "pwrite -q -S 0xab 0 $size" -c fsync \
 +		-c "truncate 0" -c "truncate $size" \
 +		-c "pwrite -q -S 0x01 $((size - 1)) 1" $file
-+	written=$($here/src/pwrite-short-copy $file $off $len $copy)
++	written=$($here/src/pwrite-short-copy $file $off $len $copy) || \
++		_fail "pwrite-short-copy failed"
 +	echo "copy $copy: write of $len bytes at $off returned $written" >> $seqres.full
++	# The first $copy bytes of the buffer are readable, so the write must
++	# store some of them and stop at the first unreadable byte.
++	if [ "$written" -le 0 -o "$written" -gt $copy ]; then
++		echo "copy $copy: write of $len bytes at $off returned $written"
++		continue
++	fi
 +	$XFS_IO_PROG -c fsync $file
 +	_scratch_cycle_mount
 +
 +	rm -f $tmp.expected
 +	$XFS_IO_PROG -f -c "truncate $size" \
-+		-c "pwrite -q -S 0x01 $((size - 1)) 1" $tmp.expected
-+	[ "$written" -gt 0 ] && \
-+		$XFS_IO_PROG -c "pwrite -q -S 0x5c $off $written" $tmp.expected
++		-c "pwrite -q -S 0x01 $((size - 1)) 1" \
++		-c "pwrite -q -S 0x5c $off $written" $tmp.expected
 +	cmp -s $file $tmp.expected || \
 +		echo "copy $copy: file contents differ after a short copy"
 +done
