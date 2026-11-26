@@ -26,6 +26,8 @@
 # section and test pairs; the dmesg check runs in every part.
 # shardable
 . "$HARNESS/guest_lib.sh"
+# CI branch only: run just the batch tests
+FSTESTS_TESTS=${FSTESTS_TESTS:-generic/816 generic/817 generic/818}
 SECTIONS=$(echo "${FSTESTS_SECTIONS:-xfs_1k,xfs_4k,ext4_1k,ext4_4k}" | tr , ' ')
 STIMEOUT=${FSTESTS_SECTION_TIMEOUT:-3000}
 TTIMEOUT=${FSTESTS_TEST_TIMEOUT:-900}
