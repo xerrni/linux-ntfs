@@ -12,9 +12,9 @@ delalloc_failed_write fail
 delalloc_partial_fail fail
 delalloc_st_blocks fail
 delalloc_zero_race fail
-# fstests_batch: generic/816, 817 and 818 fail in every section, except 818
-# with 512 byte clusters, which passes once 818 stops reading a ret that
-# _scratch_cycle_mount overwrote (checked at f674e4b6c315).
+# fstests_batch: generic/816, 817 and 818 fail in every section; v2's 818
+# fills the volume first, so it fails with 512 byte clusters too (run
+# 45814385092, 2026-11-26).
 fstests_batch fail
 fsx_parallel pass
 hole_fill_stale fail
