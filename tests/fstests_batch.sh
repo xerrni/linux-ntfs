@@ -84,22 +84,22 @@ section_tests() {	# SECTION: the tests of PAIRS in it
 		[ "${p%%:*}" = "$1" ] && echo "${p##*:}"
 	done
 }
-: > $W/check.out
+: > "$W"/check.out
 for s in $SECTIONS; do
 	s=${s%%:*}
-	stests=$(section_tests $s)
-	[ -n "$stests" ] || continue
-	mark "fstests $s:" $stests
-	(cd /mnt/xfstests && ./check -s $s -R xunit $stests) >> $W/check.out 2>&1
+	mapfile -t stests < <(section_tests "$s")
+	[ ${#stests[@]} -gt 0 ] || continue
+	mark "fstests $s:" "${stests[*]}"
+	(cd /mnt/xfstests && ./check -s "$s" -R xunit "${stests[@]}") >> "$W"/check.out 2>&1
 	echo "check $s exit status $?"
 done
-cat $W/check.out
+cat "$W"/check.out
 # one line per test and section, from the xunit report of each section
 for s in $SECTIONS; do
 	s=${s%%:*}
-	stests=$(section_tests $s)
-	[ -n "$stests" ] || continue
-	python3 - "$W/fstests-results/$s/result.xml" "$s" $stests <<'EOF'
+	mapfile -t stests < <(section_tests "$s")
+	[ ${#stests[@]} -gt 0 ] || continue
+	python3 - "$W/fstests-results/$s/result.xml" "$s" "${stests[@]}" <<'EOF'
 import sys
 import xml.etree.ElementTree as ET
 path, section, tests = sys.argv[1], sys.argv[2], sys.argv[3:]
@@ -120,11 +120,11 @@ for t in tests:
     else:
         print(f"PASS: {t} {section}")
 EOF
-	for f in "$W"/fstests-results/$s/generic/*.out.bad; do
+	for f in "$W"/fstests-results/"$s"/generic/*.out.bad; do
 		[ -f "$f" ] || continue
 		t=${f##*/}; t=${t%.out.bad}
 		echo "--- $s generic/$t: diff of the expected output"
-		diff -u /mnt/xfstests/tests/generic/$t.out "$f" | head -30
+		diff -u /mnt/xfstests/tests/generic/"$t".out "$f" | head -30
 	done
 done
 losetup -d "$tdev" "$sdev"

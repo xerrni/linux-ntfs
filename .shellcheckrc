@@ -1,0 +1,7 @@
+# Guest scripts in tests/ have no shebang: run_guest_script.sh sources them
+# into bash inside the test VM.
+shell=bash
+# They source "$HARNESS/guest_lib.sh"; HARNESS is the tests/ directory, so
+# look for sourced files next to the script that sources them.
+source-path=SCRIPTDIR
+external-sources=true

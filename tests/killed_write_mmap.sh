@@ -19,15 +19,15 @@ for cs in $CLUSTERS; do
 	tag="killed write mmap c$cs"
 	mark "$tag"
 	rm -f $IMG; truncate -s 64M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount"; continue; }
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount"; continue; }
 	size=$((64 * cs > 2097152 ? 64 * cs : 2097152))
-	python3 -c "import sys; sys.stdout.buffer.write(b'\xab' * $size)" > $M/f
-	umount $M
+	python3 -c "import sys; sys.stdout.buffer.write(b'\xab' * $size)" > "$M"/f
+	umount "$M"
 	python3 "$HARNESS/set_init_size.py" $IMG f 0 || { fail "$tag set_init_size"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount 2"; continue; }
-	"$BIN" $M/f $cs && echo "PASS: $tag data" || fail "$tag data"
-	umount $M
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount 2"; continue; }
+	if "$BIN" "$M"/f "$cs"; then echo "PASS: $tag data"; else fail "$tag data"; fi
+	umount "$M"
 	if dmesg | grep -q "after a short write"; then
 		fail "$tag: volume marked with errors"
 		dmesg -c | grep "after a short write" | head -2

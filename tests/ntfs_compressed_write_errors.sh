@@ -38,15 +38,15 @@ for cs in ${COMP_CLUSTERS:-512 4096}; do
 	tag="compressed resv c$cs"
 	mark "$tag"
 	rm -f $IMG; truncate -s 64M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount"; continue; }
-	mkcomp $M/C || { fail "$tag set compressed"; umount $M; continue; }
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount"; continue; }
+	mkcomp "$M"/C || { fail "$tag set compressed"; umount "$M"; continue; }
 	sync
-	free=$(stat -f -c %f $M)
+	free=$(stat -f -c %f "$M")
 	asize=$(( (free - 16) * cs / 4096 * 4096 ))
-	xfs_io -f -c "pwrite -q -S 0x5a 0 $asize" $M/A
-	echo "free $free clusters, A reserves $asize bytes, statfs free now $(stat -f -c %f $M)"
-	r=$(python3 - $M/C <<'PY'
+	xfs_io -f -c "pwrite -q -S 0x5a 0 $asize" "$M"/A
+	echo "free $free clusters, A reserves $asize bytes, statfs free now $(stat -f -c %f "$M")"
+	r=$(python3 - "$M"/C <<'PY'
 import os, random, sys
 random.seed(1)
 data = bytes(random.getrandbits(8) for _ in range(512 << 10))
@@ -59,11 +59,11 @@ os.close(fd)
 print(r)
 PY
 )
-	echo "compressed write of 524288 bytes returned $r, statfs free $(stat -f -c %f $M)"
+	echo "compressed write of 524288 bytes returned $r, statfs free $(stat -f -c %f "$M")"
 	sync
-	umount $M
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag remount"; continue; }
-	python3 - $M $asize $r <<'PY' && echo "PASS: $tag" || fail "$tag"
+	umount "$M"
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag remount"; continue; }
+	if python3 - "$M" $asize "$r" <<'PY'; then echo "PASS: $tag"; else fail "$tag"; fi
 import os, random, sys
 m, asize, r = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 a = open(os.path.join(m, "A"), "rb").read()
@@ -76,16 +76,16 @@ n = max(r, 0)
 assert c[:n] == data[:n], "C: written data does not read back"
 assert r < len(data), "C: the write took clusters reserved for A"
 PY
-	umount $M
+	umount "$M"
 	run_ntfsck $IMG "cw-resv-c$cs"
 
 	tag="compressed fault c$cs"
 	mark "$tag"
 	rm -f $IMG; truncate -s 64M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount"; continue; }
-	mkcomp $M/C || { fail "$tag set compressed"; umount $M; continue; }
-	python3 - $M/C $W/cw-expect $cs > $W/cw-scan.txt <<'PY'
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount"; continue; }
+	mkcomp "$M"/C || { fail "$tag set compressed"; umount "$M"; continue; }
+	python3 - "$M"/C "$W"/cw-expect "$cs" > "$W"/cw-scan.txt <<'PY'
 import os, sys
 p = sys.argv[1]
 CB = 64 << 10		# the write: one compression block with 4 KiB clusters
@@ -153,21 +153,21 @@ print("END", n - 1, "sites", bad, "bad")
 with open(sys.argv[2], "wb") as f:
     f.write(bytes(expect))
 PY
-	cat $W/cw-scan.txt | head -20
-	umount $M
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag remount"; continue; }
-	if ! grep -q "^END" $W/cw-scan.txt; then
+	cat "$W"/cw-scan.txt | head -20
+	umount "$M"
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag remount"; continue; }
+	if ! grep -q "^END" "$W"/cw-scan.txt; then
 		fail "$tag: scan did not finish"
-	elif grep -q "^BAD" $W/cw-scan.txt; then
+	elif grep -q "^BAD" "$W"/cw-scan.txt; then
 		fail "$tag: a failed write lost or changed the compression block"
-	elif ! cmp -s $M/C $W/cw-expect; then
+	elif ! cmp -s "$M"/C "$W"/cw-expect; then
 		fail "$tag: contents differ after remount"
 	else
 		echo "PASS: $tag"
 	fi
-	umount $M
+	umount "$M"
 	run_ntfsck $IMG "cw-fault-c$cs"
 done
-rm -f $IMG $W/cw-expect
+rm -f $IMG "$W"/cw-expect
 dmesg_check
 echo "### done"

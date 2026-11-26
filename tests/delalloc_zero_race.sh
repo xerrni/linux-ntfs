@@ -12,14 +12,14 @@ for cs in $CLUSTERS; do
 	tag="zero race c$cs"
 	mark "$tag"
 	rm -f $IMG; truncate -s 128M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount"; continue; }
-	if python3 $HARNESS/delalloc_zero_race.py $M/f $cs ${RACE_SECONDS:-30} ${RACE_THREADS:-3}; then
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount"; continue; }
+	if python3 "$HARNESS"/delalloc_zero_race.py "$M"/f "$cs" "${RACE_SECONDS:-30}" "${RACE_THREADS:-3}"; then
 		echo "PASS: $tag"
 	else
 		fail "$tag: stale data"
 	fi
-	umount $M
+	umount "$M"
 	run_ntfsck $IMG "zero-race-c$cs"
 done
 rm -f $IMG

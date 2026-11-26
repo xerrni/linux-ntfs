@@ -12,14 +12,14 @@ for cs in $CLUSTERS; do
 	tag="wb race c$cs"
 	mark "$tag"
 	rm -f $IMG; truncate -s 256M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount"; continue; }
-	if python3 $HARNESS/stale_wb_race.py $M/f $cs ${RACE_SECONDS:-60} ${RACE_THREADS:-2}; then
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount"; continue; }
+	if python3 "$HARNESS"/stale_wb_race.py "$M"/f "$cs" "${RACE_SECONDS:-60}" "${RACE_THREADS:-2}"; then
 		echo "PASS: $tag"
 	else
 		fail "$tag: stale data"
 	fi
-	umount $M
+	umount "$M"
 	run_ntfsck $IMG "wb-race-c$cs"
 done
 rm -f $IMG

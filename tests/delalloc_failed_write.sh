@@ -28,15 +28,15 @@ for cs in $CLUSTERS; do
 		tag="failed write + $case c$cs"
 		mark "$tag"
 		rm -f $IMG; truncate -s 64M $IMG
-		mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
-		mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount"; continue; }
+		mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
+		mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount"; continue; }
 		# some metadata and data around so that bogus cluster numbers hit something
-		for i in 1 2 3 4; do xfs_io -f -c "pwrite -q -S 0x3$i 0 $((8 * unit))" $M/other$i; done
+		for i in 1 2 3 4; do xfs_io -f -c "pwrite -q -S 0x3$i 0 $((8 * unit))" "$M"/other$i; done
 		f=$M/f
-		xfs_io -f -c "truncate $big" -c fsync $f
+		xfs_io -f -c "truncate $big" -c fsync "$f"
 		sync
-		free0=$(stat -f -c %f $M)
-		python3 - $f $((big / 2)) <<'PY' || fail "$tag: write from a bad buffer did not fail"
+		free0=$(stat -f -c %f "$M")
+		python3 - "$f" $((big / 2)) <<'PY' || fail "$tag: write from a bad buffer did not fail"
 import ctypes, os, sys
 libc = ctypes.CDLL(None, use_errno=True)
 libc.pwrite.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_long]
@@ -47,17 +47,17 @@ sys.exit(0 if r < 0 else 1)
 PY
 		size=$big; wr=""
 		case $case in
-		punch)	xfs_io -c "fpunch $((big / 8)) $((big / 8))" $f || fail "$tag fpunch" ;;
-		collapse) xfs_io -c "fcollapse $((big / 8)) $((big / 8))" $f || fail "$tag fcollapse"
+		punch)	xfs_io -c "fpunch $((big / 8)) $((big / 8))" "$f" || fail "$tag fpunch" ;;
+		collapse) xfs_io -c "fcollapse $((big / 8)) $((big / 8))" "$f" || fail "$tag fcollapse"
 			size=$((big - big / 8)) ;;
-		insert)	xfs_io -c "finsert $((big / 8)) $((big / 8))" $f || fail "$tag finsert"
+		insert)	xfs_io -c "finsert $((big / 8)) $((big / 8))" "$f" || fail "$tag finsert"
 			size=$((big + big / 8)) ;;
-		write)	xfs_io -c "pwrite -q -S 0x77 $((big / 8)) $unit" $f; wr=$((big / 8)) ;;
+		write)	xfs_io -c "pwrite -q -S 0x77 $((big / 8)) $unit" "$f"; wr=$((big / 8)) ;;
 		esac
 		sync
-		free1=$(stat -f -c %f $M)
+		free1=$(stat -f -c %f "$M")
 		echo 3 > /proc/sys/vm/drop_caches
-		python3 - $f $size "$wr" $unit <<'PY' && echo "PASS: $tag contents" || fail "$tag contents"
+		if python3 - "$f" $size "$wr" $unit <<'PY'; then echo "PASS: $tag contents"; else fail "$tag contents"; fi
 import sys
 d = open(sys.argv[1], "rb").read()
 size, wr, unit = int(sys.argv[2]), sys.argv[3], int(sys.argv[4])
@@ -70,19 +70,24 @@ if d != exp:
     i = next(i for i in range(size) if d[i] != exp[i])
     sys.exit(f"differs at {i}: {d[i:i + 16].hex()} (FILE record: {b'FILE' in d})")
 PY
-		umount $M
+		umount "$M"
 		run_ntfsck $IMG "failed-$case-c$cs"
-		mount -i -t ntfs -o loop $IMG $M
-		free2=$(stat -f -c %f $M)
-		umount $M
+		mount -i -t ntfs -o loop $IMG "$M"
+		free2=$(stat -f -c %f "$M")
+		umount "$M"
 		if [ "$case" = none ] || [ "$case" = punch ]; then
 			# nothing was allocated: all clusters must be free again
-			[ "$free1" = "$free0" ] && [ "$free2" = "$free0" ] &&
-				echo "PASS: $tag free space ($free0)" ||
+			if [ "$free1" = "$free0" ] && [ "$free2" = "$free0" ]; then
+				echo "PASS: $tag free space ($free0)"
+			else
 				fail "$tag free space: before $free0, after sync $free1, after remount $free2"
+			fi
 		else
-			[ "$free1" = "$free2" ] && echo "PASS: $tag no leak ($free1)" ||
+			if [ "$free1" = "$free2" ]; then
+				echo "PASS: $tag no leak ($free1)"
+			else
 				fail "$tag: leak $((free2 - free1)) clusters (after sync $free1, after remount $free2)"
+			fi
 		fi
 	done
 done

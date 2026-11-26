@@ -21,9 +21,9 @@ old() {	# old FILE: number of 0xee bytes in FILE
 }
 for cs in $CLUSTERS; do
 	rm -f $IMG; truncate -s 128M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "mkntfs c$cs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "mount c$cs"; continue; }
-	python3 - $M/old <<'PY'
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "mkntfs c$cs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "mount c$cs"; continue; }
+	python3 - "$M"/old <<'PY'
 import os, sys
 fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT)
 b = b'\xee' * (1 << 20)
@@ -34,34 +34,43 @@ except OSError:
     pass
 os.fsync(fd)
 PY
-	sync; rm $M/old; sync
+	sync; rm "$M"/old; sync
 	for mode in aio sync; do
 		for n in 1 2 3; do
 			tag="partial $mode dio c$cs #$n"; mark "$tag"
 			f=$M/$mode-$n
-			xfs_io -f -c "falloc -k 0 $((6 << 20))" $f
-			"$BIN" $f $((4 << 20)) $((6 << 20)) $mode &&
-				echo "PASS: $tag" || fail "$tag: old data readable"
+			xfs_io -f -c "falloc -k 0 $((6 << 20))" "$f"
+			if "$BIN" "$f" $((4 << 20)) $((6 << 20)) $mode; then
+				echo "PASS: $tag"
+			else
+				fail "$tag: old data readable"
+			fi
 		done
 	done
 	for kind in reserved empty; do
 		tag="nowait dio into a $kind file c$cs"; mark "$tag"
 		f=$M/nowait
-		rm -f $f; touch $f
+		rm -f "$f"; touch "$f"
 		# an empty file is resident until the write makes it non-resident
-		[ $kind = reserved ] && xfs_io -c "falloc -k 0 $((6 << 20))" $f
-		"$BIN" $f $((4 << 20)) $((6 << 20)) nowait &&
-			echo "PASS: $tag returns EAGAIN" || fail "$tag: no EAGAIN or the size moved"
-		rm -f $f
+		[ $kind = reserved ] && xfs_io -c "falloc -k 0 $((6 << 20))" "$f"
+		if "$BIN" "$f" $((4 << 20)) $((6 << 20)) nowait; then
+			echo "PASS: $tag returns EAGAIN"
+		else
+			fail "$tag: no EAGAIN or the size moved"
+		fi
+		rm -f "$f"
 	done
-	umount $M
-	mount -i -t ntfs -o loop $IMG $M || { fail "remount c$cs"; continue; }
-	for f in $M/aio-* $M/sync-*; do
-		n=$(old $f)
-		[ "$n" = 0 ] && echo "PASS: no old data in $(basename $f) after remount c$cs" ||
-			fail "$(basename $f) c$cs: $n bytes of old data after remount (size $(stat -c %s $f))"
+	umount "$M"
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "remount c$cs"; continue; }
+	for f in "$M"/aio-* "$M"/sync-*; do
+		n=$(old "$f")
+		if [ "$n" = 0 ]; then
+			echo "PASS: no old data in $(basename "$f") after remount c$cs"
+		else
+			fail "$(basename "$f") c$cs: $n bytes of old data after remount (size $(stat -c %s "$f"))"
+		fi
 	done
-	umount $M
+	umount "$M"
 	run_ntfsck $IMG "aio-dio-c$cs"
 done
 dmesg_check

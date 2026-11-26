@@ -16,15 +16,15 @@ for mode in ${HOLE_MODES:-dio buffered mkwrite}; do
 		tag="hole fill $mode c$cs"
 		mark "$tag"
 		rm -f $IMG; truncate -s 64M $IMG
-		mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
-		mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount"; continue; }
-		python3 $HARNESS/hole_fill_stale.py $M $cs ${RACE_SECONDS:-30} $mode ${RACE_READERS:-3}
+		mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
+		mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount"; continue; }
+		python3 "$HARNESS"/hole_fill_stale.py "$M" "$cs" "${RACE_SECONDS:-30}" "$mode" "${RACE_READERS:-3}"
 		rc=$?
-		umount $M
-		mount -i -t ntfs -o loop $IMG $M || { fail "$tag remount"; continue; }
-		python3 $HARNESS/hole_fill_stale.py $M $cs 0 $mode
+		umount "$M"
+		mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag remount"; continue; }
+		python3 "$HARNESS"/hole_fill_stale.py "$M" "$cs" 0 "$mode"
 		rc2=$?
-		umount $M
+		umount "$M"
 		if [ $rc = 0 ] && [ $rc2 = 0 ]; then
 			echo "PASS: $tag"
 		else

@@ -18,30 +18,31 @@ fi
 FSX_JOBS=${FSX_JOBS:-4}
 FSX_OPS=${FSX_OPS:-40000}
 FSX_ARGS=${FSX_ARGS:--l 1048576 -o 65536}
+read -ra fsx_args <<< "$FSX_ARGS"
 mountpoint -q /mnt || mount -t tmpfs -o size=1500m tmpfs /mnt
 IMG=/mnt/fsx.img
 for cs in $CLUSTERS; do
 	mark "fsx x$FSX_JOBS c$cs"
 	rm -f $IMG; truncate -s 256M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "mkntfs $cs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "mount $cs"; continue; }
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "mkntfs $cs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "mount $cs"; continue; }
 	# the operations fsx leaves out because the volume refuses them (only
 	# printed without -q): one operation on a scratch file
-	$FSX -N 1 -P $W $M/fsx.probe 2>&1 | grep "disabling" | sed "s/^/c$cs: /"
-	rm -f $M/fsx.probe
+	$FSX -N 1 -P "$W" "$M"/fsx.probe 2>&1 | grep "disabling" | sed "s/^/c$cs: /"
+	rm -f "$M"/fsx.probe
 	pids=""; bad=0
-	for j in $(seq 1 $FSX_JOBS); do
-		$FSX -q -N $FSX_OPS -S $((cs + j)) $FSX_ARGS -P $W $M/fsx.$j > $W/fsx-c$cs-$j.out 2>&1 &
+	for j in $(seq 1 "$FSX_JOBS"); do
+		$FSX -q -N "$FSX_OPS" -S $((cs + j)) "${fsx_args[@]}" -P "$W" "$M"/fsx."$j" > "$W"/fsx-c"$cs"-"$j".out 2>&1 &
 		pids="$pids $!"
 	done
-	for p in $pids; do wait $p || { bad=1; fail "fsx c$cs (pid $p), see $W/fsx-c$cs-*.out"; }; done
-	grep -l "^LOG DUMP\|FAIL\|failed" $W/fsx-c$cs-*.out 2>/dev/null | head -3
+	for p in $pids; do wait "$p" || { bad=1; fail "fsx c$cs (pid $p), see $W/fsx-c$cs-*.out"; }; done
+	grep -l "^LOG DUMP\|FAIL\|failed" "$W"/fsx-c"$cs"-*.out 2>/dev/null | head -3
 	# each instance ends with "All N operations completed A-OK!"
-	grep -h "operations completed A-OK" $W/fsx-c$cs-*.out
-	ok=$(cat $W/fsx-c$cs-*.out | grep -c "operations completed A-OK")
+	grep -h "operations completed A-OK" "$W"/fsx-c"$cs"-*.out
+	ok=$(cat "$W"/fsx-c"$cs"-*.out | grep -c "operations completed A-OK")
 	[ "$ok" = "$FSX_JOBS" ] || { bad=1; fail "fsx c$cs: $ok of $FSX_JOBS instances completed"; }
-	echo "free after fsx: $(stat -f -c %f $M)"
-	umount $M
+	echo "free after fsx: $(stat -f -c %f "$M")"
+	umount "$M"
 	run_ntfsck $IMG "fsx-c$cs"
 	[ $bad = 0 ] && echo "PASS: fsx x$FSX_JOBS c$cs, $FSX_OPS operations each"
 done

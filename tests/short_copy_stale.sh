@@ -20,9 +20,9 @@ for cs in $CLUSTERS; do
 	tag="short copy c$cs"
 	mark "$tag"
 	rm -f $IMG; truncate -s 64M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount"; continue; }
-	python3 - $M/f $cs <<'PY' && echo "PASS: $tag" || fail "$tag"
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount"; continue; }
+	if python3 - "$M"/f "$cs" <<'PY'; then echo "PASS: $tag"; else fail "$tag"; fi
 import ctypes, mmap, os, sys
 path, cs = sys.argv[1], int(sys.argv[2])
 nclu = 32
@@ -86,7 +86,7 @@ for b in bad:
     print(b)
 sys.exit(1 if bad else 0)
 PY
-	umount $M
+	umount "$M"
 	run_ntfsck $IMG "short-copy-c$cs"
 done
 rm -f $IMG

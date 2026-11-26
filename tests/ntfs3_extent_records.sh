@@ -19,13 +19,13 @@
 # EXT_CLUSTER (default 512) selects the cluster size of the test volume.
 . "$HARNESS/guest_lib.sh"
 cs=${EXT_CLUSTER:-512}
-img=$W/ext-$cs.img; rm -f $img $W/exp-ext.json; truncate -s 64M $img
-mkntfs -F -Q -q -c $cs $img >/dev/null 2>&1 || { fail "mkntfs"; exit; }
+img=$W/ext-$cs.img; rm -f "$img" "$W"/exp-ext.json; truncate -s 64M "$img"
+mkntfs -F -Q -q -c "$cs" "$img" >/dev/null 2>&1 || { fail "mkntfs"; exit; }
 records() {	# records IMG PATH: MFT numbers holding attributes of PATH
 	"$NTFSINFO" -F "$2" "$1" | sed -n 's/.*from mft record \([0-9]*\) .*/\1/p' | sort -un
 }
 text() {	# text PATH SIZE SEED [append]: compressible data, recorded in exp-ext.json
-	python3 - "$1" "$2" "$3" $W/exp-ext.json "${4:-}" <<'PY'
+	python3 - "$1" "$2" "$3" "$W"/exp-ext.json "${4:-}" <<'PY'
 import hashlib, json, os, random, sys
 p, size, seed, ef, mode = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], sys.argv[5]
 r = random.Random(seed)
@@ -47,15 +47,15 @@ json.dump(e, open(ef, "w"), indent=1)
 print("wrote", p, size)
 PY
 }
-mount_drv ntfs-3g $img rw || { fail "ntfs-3g mount"; exit; }
+mount_drv ntfs-3g "$img" rw || { fail "ntfs-3g mount"; exit; }
 chunk=$((2 * cs)); [ $chunk -lt 1024 ] && chunk=1024
-python3 $HARNESS/make_fragmented.py $M $chunk
-mkdir $M/comp && setfattr -h -v 0x00000810 -n system.ntfs_attrib_be $M/comp
-getfattr -h -e hex -n system.ntfs_attrib_be $M/comp
-text $M/comp/t1-ntfs3g.txt 3000000 1
+python3 "$HARNESS"/make_fragmented.py "$M" $chunk
+mkdir "$M"/comp && setfattr -h -v 0x00000810 -n system.ntfs_attrib_be "$M"/comp
+getfattr -h -e hex -n system.ntfs_attrib_be "$M"/comp
+text "$M"/comp/t1-ntfs3g.txt 3000000 1
 # T4: dense file with extents, then a hole far past the end of the volume
-python3 -c "import os,sys;open(sys.argv[1],'wb').write(os.urandom(2<<20))" $M/t4-ntfs3g.bin
-python3 - $M/t4-ntfs3g.bin $W/exp-ext.json <<'PY'
+python3 -c "import os,sys;open(sys.argv[1],'wb').write(os.urandom(2<<20))" "$M"/t4-ntfs3g.bin
+python3 - "$M"/t4-ntfs3g.bin "$W"/exp-ext.json <<'PY'
 import hashlib, json, os, sys
 p, ef = sys.argv[1], sys.argv[2]
 with open(p, "r+b") as f:
@@ -65,14 +65,14 @@ e = json.load(open(ef)) if os.path.exists(ef) else {}
 e[p] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
 json.dump(e, open(ef, "w"), indent=1)
 PY
-umount $M
-mount_drv ntfs3 $img rw || fail "ntfs3 mount rw"
-text $M/comp/t2-ntfs3.txt 3000000 2
-umount $M
-mount_drv ntfs $img rw || fail "ntfs mount rw"
-text $M/comp/t3-ntfs.txt 3000000 3 2>/dev/null || echo "SKIP: T3, the ntfs driver does not create compressed files"
-python3 $HARNESS/sparse_ops.py $M/t5-ntfs.bin $cs 5 $W/exp-ext.json --new || fail "T5 ops"
-python3 - $M/t5-ntfs.bin $W/exp-ext.json <<'PY'
+umount "$M"
+mount_drv ntfs3 "$img" rw || fail "ntfs3 mount rw"
+text "$M"/comp/t2-ntfs3.txt 3000000 2
+umount "$M"
+mount_drv ntfs "$img" rw || fail "ntfs mount rw"
+text "$M"/comp/t3-ntfs.txt 3000000 3 2>/dev/null || echo "SKIP: T3, the ntfs driver does not create compressed files"
+python3 "$HARNESS"/sparse_ops.py "$M"/t5-ntfs.bin "$cs" 5 "$W"/exp-ext.json --new || fail "T5 ops"
+python3 - "$M"/t5-ntfs.bin "$W"/exp-ext.json <<'PY'
 import hashlib, json, sys
 p, ef = sys.argv[1], sys.argv[2]
 with open(p, "r+b") as f:	# end the file far past the end of the volume
@@ -82,16 +82,17 @@ e = json.load(open(ef))
 e[p] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
 json.dump(e, open(ef, "w"), indent=1)
 PY
-umount $M
+umount "$M"
 for f in /comp/t1-ntfs3g.txt /comp/t2-ntfs3.txt /comp/t3-ntfs.txt /t4-ntfs3g.bin /t5-ntfs.bin; do
 	echo "--- $f"
-	python3 $HARNESS/dump_attr_headers.py $img $(records $img $f) | grep -E "^record|\\\$DATA"
+	mapfile -t recs < <(records "$img" "$f")
+	python3 "$HARNESS"/dump_attr_headers.py "$img" "${recs[@]}" | grep -E "^record|\\\$DATA"
 done
-run_ntfsck $img ext-$cs
+run_ntfsck "$img" ext-"$cs"
 for drv in ntfs ntfs3 ntfs-3g; do
-	mount_drv $drv $img ro || { fail "mount $drv"; continue; }
+	mount_drv $drv "$img" ro || { fail "mount $drv"; continue; }
 	mark "verify with $drv"
-	python3 - $W/exp-ext.json $drv <<'PY'
+	python3 - "$W"/exp-ext.json $drv <<'PY'
 import hashlib, json, sys
 bad = 0
 for p, m in json.load(open(sys.argv[1])).items():
@@ -102,7 +103,7 @@ for p, m in json.load(open(sys.argv[1])).items():
         ok, msg = False, f"ERR {e.strerror}"
     print(("PASS" if ok else "FAIL") + f": {sys.argv[2]} reads {p.rsplit('/', 1)[1]}: {msg}")
 PY
-	umount $M
+	umount "$M"
 done
 dmesg | grep -E "ntfs3\(|ntfs:" | grep -v "volume version\|put_super" | tail -20
 dmesg_check

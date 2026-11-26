@@ -50,6 +50,7 @@ if [ "${KCCACHE:-1}" != 0 ] && command -v ccache >/dev/null; then
 	if [ -z "${KBUILD_REAL_OUT:-}" ] && [ "$src" != "$kb/src" ] && unshare -rm true 2>/dev/null; then
 		mkdir -p "$kb/src" "$kb/out"
 		export KBUILD_REAL_OUT=$out KBUILD_REAL_SRC=$src
+		# shellcheck disable=SC2016 # the inner bash -c expands $1..$4, not this shell
 		exec unshare -rm bash -c 'mount --bind "$1" "$3/src" && mount --bind "$2" "$3/out" &&
 			exec "$0" "$3/src" "$3/out" "$4"' "$(realpath "$0")" "$src" "$out" "$kb" "$flavour"
 	fi

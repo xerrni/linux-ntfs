@@ -34,16 +34,16 @@
 mountpoint -q /mnt || mount -t tmpfs -o size=1g tmpfs /mnt
 IMG=/mnt/delalloc.img
 XIO="xfs_io -f"
-bfree() { sync; stat -f -c %f $M; }
+bfree() { sync; stat -f -c %f "$M"; }
 remount_free() {	# fresh count from $Bitmap
-	umount $M || return 1
-	mount -i -t ntfs -o loop,streams_interface=windows $IMG $M || return 1
-	stat -f -c %f $M
+	umount "$M" || return 1
+	mount -i -t ntfs -o loop,streams_interface=windows $IMG "$M" || return 1
+	stat -f -c %f "$M"
 }
 newvol() {	# newvol CLUSTER
 	rm -f $IMG; truncate -s 64M $IMG
-	mkntfs -F -Q -q -c $1 $IMG >/dev/null 2>&1 &&
-		mount -i -t ntfs -o loop,streams_interface=windows $IMG $M
+	mkntfs -F -Q -q -c "$1" $IMG >/dev/null 2>&1 &&
+		mount -i -t ntfs -o loop,streams_interface=windows $IMG "$M"
 }
 check_leak() {	# check_leak TAG: f_bfree after sync must equal a fresh mount's
 	local a b
@@ -57,17 +57,17 @@ for cs in $CLUSTERS; do
 	for case in trunc trunc0 punch rewrite unlink otrunc falloc srm sunlink efault; do
 		tag="$case c$cs"
 		mark "$tag"
-		newvol $cs || { fail "$tag mkntfs/mount"; continue; }
+		newvol "$cs" || { fail "$tag mkntfs/mount"; continue; }
 		f=$M/f
 		case $case in
-		trunc)	$XIO -c "pwrite -q -S 0x5a 0 $big" -c "truncate $((big / 4 + 100))" $f ;;
-		trunc0)	$XIO -c "pwrite -q -S 0x5a 0 $big" -c "truncate 0" $f ;;
+		trunc)	$XIO -c "pwrite -q -S 0x5a 0 $big" -c "truncate $((big / 4 + 100))" "$f" ;;
+		trunc0)	$XIO -c "pwrite -q -S 0x5a 0 $big" -c "truncate 0" "$f" ;;
 		punch)	$XIO -c "pwrite -q -S 0x5a 0 $big" \
-			     -c "fpunch $((big / 4)) $((big / 2))" $f ;;
+			     -c "fpunch $((big / 4)) $((big / 2))" "$f" ;;
 		rewrite) $XIO -c "pwrite -q -S 0x5a 0 $big" -c "pwrite -q -S 0x6b 0 $big" \
-			     -c "pwrite -q -S 0x7c $((big / 2)) $big" $f ;;
-		unlink)	$XIO -c "pwrite -q -S 0x5a 0 $big" $f; rm -f $f ;;
-		otrunc)	python3 - $M $unit <<'PY'
+			     -c "pwrite -q -S 0x7c $((big / 2)) $big" "$f" ;;
+		unlink)	$XIO -c "pwrite -q -S 0x5a 0 $big" "$f"; rm -f "$f" ;;
+		otrunc)	python3 - "$M" $unit <<'PY'
 import os, sys
 d, unit = sys.argv[1], int(sys.argv[2])
 for i in range(300):
@@ -80,22 +80,22 @@ for i in range(300):
         os.unlink(p)
 PY
 			;;
-		falloc)	s0=$(stat -f -c %f $M)
-			$XIO -c "pwrite -q -S 0x5a 0 $big" $f
-			s1=$(stat -f -c %f $M)
-			$XIO -c "falloc 0 $big" $M/g
-			s2=$(stat -f -c %f $M)
+		falloc)	s0=$(stat -f -c %f "$M")
+			$XIO -c "pwrite -q -S 0x5a 0 $big" "$f"
+			s1=$(stat -f -c %f "$M")
+			$XIO -c "falloc 0 $big" "$M"/g
+			s2=$(stat -f -c %f "$M")
 			n=$((big / cs))
 			# only the fallocate() may have changed $Bitmap meanwhile
 			if [ $((s0 - s1)) -lt $n ] || [ $((s1 - s2)) -lt $n ]; then
 				fail "$tag: reservation lost: free $s0 -> $s1 after a dirty write of $n clusters -> $s2 after fallocate of $n clusters"
 			else echo "PASS: $tag reservation kept ($s0 -> $s1 -> $s2)"; fi ;;
-		srm)	echo base > $f
-			$XIO -c "pwrite -q -S 0x5a 0 $big" $f:s && rm $f:s ;;
-		sunlink) echo base > $f
-			$XIO -c "pwrite -q -S 0x5a 0 $big" $f:s && rm $f ;;
-		efault)	$XIO -c "truncate $big" -c fsync $f
-			python3 - $f $big <<'PY' || fail "$tag: write from a bad buffer did not fail"
+		srm)	echo base > "$f"
+			$XIO -c "pwrite -q -S 0x5a 0 $big" "$f":s && rm "$f":s ;;
+		sunlink) echo base > "$f"
+			$XIO -c "pwrite -q -S 0x5a 0 $big" "$f":s && rm "$f" ;;
+		efault)	$XIO -c "truncate $big" -c fsync "$f"
+			python3 - "$f" $big <<'PY' || fail "$tag: write from a bad buffer did not fail"
 import ctypes, os, sys
 libc = ctypes.CDLL(None, use_errno=True)
 libc.pwrite.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_long]
@@ -107,7 +107,7 @@ PY
 			;;
 		esac
 		check_leak "$tag"
-		umount $M
+		umount "$M"
 		run_ntfsck $IMG "$case-c$cs"
 	done
 done

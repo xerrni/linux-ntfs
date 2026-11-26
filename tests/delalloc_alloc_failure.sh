@@ -24,7 +24,7 @@ mountpoint -q /mnt || mount -t tmpfs -o size=1g tmpfs /mnt
 mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug
 for f in failslab fail_page_alloc; do
 	echo N > /sys/kernel/debug/$f/ignore-gfp-wait
-	echo ${FAULT_VERBOSE:-1} > /sys/kernel/debug/$f/verbose
+	echo "${FAULT_VERBOSE:-1}" > /sys/kernel/debug/$f/verbose
 done
 echo 0 > /sys/kernel/debug/fail_page_alloc/min-order
 IMG=/mnt/allocfail.img
@@ -32,17 +32,17 @@ for cs in $CLUSTERS; do
 	tag="alloc failure c$cs"
 	mark "$tag"
 	rm -f $IMG; truncate -s 128M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount"; continue; }
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount"; continue; }
 	unit=$((cs > 4096 ? cs : 4096))
 	sync
-	free0=$(stat -f -c %f $M)
-	xfs_io -f -c "pwrite -q -S 0x5a 0 4m" $M/A
-	free1=$(stat -f -c %f $M)
+	free0=$(stat -f -c %f "$M")
+	xfs_io -f -c "pwrite -q -S 0x5a 0 4m" "$M"/A
+	free1=$(stat -f -c %f "$M")
 	resv=$((free0 - free1))
 	echo "A reserved $resv clusters (free $free0 -> $free1)"
 	sleep 6	# kernel messages are rate limited (10 per 5 s); the scan needs them
-	python3 - $M $unit > $W/scan.txt <<'PY'
+	python3 - "$M" $unit > "$W"/scan.txt <<'PY'
 import os, subprocess, sys
 mnt, unit = sys.argv[1], int(sys.argv[2])
 MSG = "Failed to allocate clusters, aborting (error -12)"
@@ -86,12 +86,13 @@ for n in range(1, 400):
         print("BLOCKS", n, r, b1, b2)
 print("END", n - 1)
 PY
-	dmesg > $W/dmesg-c$cs.txt
-	grep -v "^DELTA\|^BLOCKS" $W/scan.txt
-	set -- $(grep ^HIT $W/scan.txt)
+	dmesg > "$W"/dmesg-c"$cs".txt
+	grep -v "^DELTA\|^BLOCKS" "$W"/scan.txt
+	read -ra hit < <(grep ^HIT "$W"/scan.txt)
+	set -- "${hit[@]}"
 	if [ $# = 0 ]; then
 		fail "$tag: no injected failure reached ntfs_cluster_alloc()"
-		umount $M; continue
+		umount "$M"; continue
 	fi
 	n=$2 r=$3 before=$4 after=$5
 	echo "fail-nth $n: fsync returned $r, free clusters $before -> $after"
@@ -101,22 +102,22 @@ PY
 		echo "PASS: $tag reservation kept"
 	fi
 	# every failed fsync of B must leave B's reservation and st_blocks alone
-	if grep -q ^DELTA $W/scan.txt; then
+	if grep -q ^DELTA "$W"/scan.txt; then
 		fail "$tag: a failed fsync changed the free space"
-		grep ^DELTA $W/scan.txt | head -5
+		grep ^DELTA "$W"/scan.txt | head -5
 	else
 		echo "PASS: $tag free space unchanged by every failed fsync"
 	fi
-	if grep -q ^BLOCKS $W/scan.txt; then
+	if grep -q ^BLOCKS "$W"/scan.txt; then
 		fail "$tag: a failed fsync changed st_blocks"
-		grep ^BLOCKS $W/scan.txt | head -5
+		grep ^BLOCKS "$W"/scan.txt | head -5
 	else
 		echo "PASS: $tag st_blocks unchanged by every failed fsync"
 	fi
-	after=$(stat -f -c %f $M)
+	after=$(stat -f -c %f "$M")
 	# take everything statfs() calls free, keeping 16 clusters for metadata
 	fill=$(( (after - 16) * cs ))
-	r=$(python3 - $M/fill $fill <<'PY'
+	r=$(python3 - "$M"/fill $fill <<'PY'
 import os, sys
 fd = os.open(sys.argv[1], os.O_CREAT | os.O_WRONLY, 0o644)
 n, off, chunk = int(sys.argv[2]), 0, 1 << 20
@@ -131,9 +132,9 @@ PY
 )
 	echo "fill wrote $r of $fill bytes"
 	sync
-	umount $M
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag remount"; continue; }
-	python3 - $M <<'PY' && echo "PASS: $tag data" || fail "$tag data lost"
+	umount "$M"
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag remount"; continue; }
+	if python3 - "$M" <<'PY'; then echo "PASS: $tag data"; else fail "$tag data lost"; fi
 import os, sys
 m = sys.argv[1]
 a = open(os.path.join(m, "A"), "rb").read()
@@ -142,7 +143,7 @@ f = open(os.path.join(m, "fill"), "rb").read()
 bad = len(f) - f.count(b"\x77")
 assert bad == 0, "fill: %d of %d bytes are not the written data" % (bad, len(f))
 PY
-	umount $M
+	umount "$M"
 	run_ntfsck $IMG "allocfail-c$cs"
 done
 rm -f $IMG

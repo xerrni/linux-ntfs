@@ -28,17 +28,25 @@ build=$1; work=$(realpath -m "$2"); shift 2
 if [ $# = 0 ]; then
 	# the slowest first (minutes each), so that with JOBS > 1 the VMs
 	# finish at about the same time
-	slow="ntfs_compressed_stages.sh sparse_cu_crafted.sh hole_fill_stale.sh
-		sparse_cu_rw.sh stale_wb_race.sh"
-	set -- $slow $(cd "$here" && ls delalloc_*.sh hole_fill_stale.sh short_copy_stale.sh \
-		short_write_size.sh stale_wb_race.sh slab_cache_names.sh sparse_cu_*.sh fstests_batch.sh \
-		ntfs_compressed_*.sh fsx_parallel.sh killed_short_write.sh killed_write_mmap.sh \
-		keep_size_short_write.sh stale_write_mapping.sh aio_dio_partial.sh 2>/dev/null | grep -vxF "$(printf '%s\n' $slow)")
+	slow=(ntfs_compressed_stages.sh sparse_cu_crafted.sh hole_fill_stale.sh
+		sparse_cu_rw.sh stale_wb_race.sh)
+	others=()
+	for p in "$here"/{delalloc_*,short_copy_stale,short_write_size,slab_cache_names}.sh \
+		"$here"/{sparse_cu_*,fstests_batch,ntfs_compressed_*,fsx_parallel}.sh \
+		"$here"/{killed_short_write,killed_write_mmap,keep_size_short_write}.sh \
+		"$here"/{stale_write_mapping,aio_dio_partial}.sh; do
+		s=${p##*/}
+		[ -e "$p" ] || continue
+		case " ${slow[*]} " in *" $s "*) ;; *) others+=("$s");; esac
+	done
+	mapfile -t others < <(printf '%s\n' "${others[@]}" | sort -u)
+	set -- "${slow[@]}" "${others[@]}"
 fi
 if [ -n "${SKIP:-}" ]; then
+	read -ra skip <<< "$SKIP"
 	keep=()
 	for s in "$@"; do
-		case " $(echo $SKIP) " in *" ${s##*/} "*) ;; *) keep+=("$s");; esac
+		case " ${skip[*]} " in *" ${s##*/} "*) ;; *) keep+=("$s");; esac
 	done
 	set -- "${keep[@]}"
 fi

@@ -33,9 +33,9 @@ mft_no() {	# mft_no IMG PATH
 mount_drv() {	# mount_drv ntfs|ntfs3|ntfs-3g IMG [ro|rw]
 	local o=${3:-rw}
 	case $1 in
-	ntfs)	mount -i -t ntfs -o $o,loop,streams_interface=windows "$2" "$M" ;;
-	ntfs3)	mount -i -t ntfs3 -o $o,loop "$2" "$M" ;;
-	ntfs-3g) ntfs-3g -o $o,streams_interface=windows "$2" "$M" ;;
+	ntfs)	mount -i -t ntfs -o "$o",loop,streams_interface=windows "$2" "$M" ;;
+	ntfs3)	mount -i -t ntfs3 -o "$o",loop "$2" "$M" ;;
+	ntfs-3g) ntfs-3g -o "$o",streams_interface=windows "$2" "$M" ;;
 	esac
 }
 run_ntfsck() {	# run_ntfsck IMG TAG: ntfsck -n, PASS/FAIL line, log in $W/ntfsck-TAG.log

@@ -44,7 +44,7 @@ for p in "$@"; do
 	http://*|https://*)
 		curl -fsSL -o "$f" "$p" ;;
 	*@*)
-		[ -f "$p" ] && cp "$p" "$f" || b4 -q am -o - "${p//[<>]/}" > "$f" ;;
+		if [ -f "$p" ]; then cp "$p" "$f"; else b4 -q am -o - "${p//[<>]/}" > "$f"; fi ;;
 	*)
 		cp "$p" "$f" ;;
 	esac

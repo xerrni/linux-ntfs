@@ -87,98 +87,114 @@ if bytes(exp) != d:
         bad[-1] + 1 if bad else -1, sorted({hex(d[i]) for i in bad})[:4]))
 PY
 }
-for cs in $(printf '%s\n' $CLUSTERS 1024 2048 | sort -nu); do
+for cs in $(echo "$CLUSTERS 1024 2048" | tr ' ' '\n' | sort -nu); do
 	rm -f $IMG; truncate -s 64M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "mkntfs c$cs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "mount c$cs"; continue; }
-	python3 -c "import sys; sys.stdout.buffer.write(b'\xee' * (16 << 20))" > $M/old
-	sync; rm $M/old; sync
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "mkntfs c$cs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "mount c$cs"; continue; }
+	python3 -c "import sys; sys.stdout.buffer.write(b'\xee' * (16 << 20))" > "$M"/old
+	sync; rm "$M"/old; sync
 	unit=$((cs > 4096 ? cs : 4096))
 	size=$((64 * unit))
 	for init in 0 full; do
 		tag="failed unaligned write init=$init c$cs"; mark "$tag"
 		f=$M/f-$init
-		xfs_io -f -c "truncate $size" $f
-		[ $init = full ] && xfs_io -c "pwrite -q $((size - 512)) 512" $f
-		xfs_io -c fsync $f; sync
-		free0=$(stat -f -c %f $M)
-		efault $f $((8 * unit + 512)) $((8 * unit))
+		xfs_io -f -c "truncate $size" "$f"
+		[ $init = full ] && xfs_io -c "pwrite -q $((size - 512)) 512" "$f"
+		xfs_io -c fsync "$f"; sync
+		free0=$(stat -f -c %f "$M")
+		efault "$f" $((8 * unit + 512)) $((8 * unit))
 		sync
-		free1=$(stat -f -c %f $M)
-		exp=""; [ $init = full ] && exp="$((size - 512)) 512 0xcd"
-		zeroes $f $size $exp && echo "PASS: $tag contents (cache)" || fail "$tag contents (cache)"
+		free1=$(stat -f -c %f "$M")
+		exp=(); [ $init = full ] && exp=($((size - 512)) 512 0xcd)
+		if zeroes "$f" $size "${exp[@]}"; then echo "PASS: $tag contents (cache)"; else fail "$tag contents (cache)"; fi
 		echo 3 > /proc/sys/vm/drop_caches
-		zeroes $f $size $exp && echo "PASS: $tag contents (disk)" || fail "$tag contents (disk)"
+		if zeroes "$f" $size "${exp[@]}"; then echo "PASS: $tag contents (disk)"; else fail "$tag contents (disk)"; fi
 		echo "$tag: $((free0 - free1)) clusters allocated by the failed write"
-		[ $((free0 - free1)) -le 2 ] &&
-			echo "PASS: $tag allocates at most the zeroed edge clusters" ||
+		if [ $((free0 - free1)) -le 2 ]; then
+			echo "PASS: $tag allocates at most the zeroed edge clusters"
+		else
 			fail "$tag: $((free0 - free1)) clusters allocated, at most 2 expected"
+		fi
 	done
 	tag="short copy of one cluster into a cached hole c$cs"; mark "$tag"
 	f=$M/short-cs
-	exp_cs="0 $cs 0xab $((size - 512)) 512 0xcd"
-	xfs_io -f -c "truncate $size" -c "pwrite -q $((size - 512)) 512" -c fsync $f; sync
-	free0=$(stat -f -c %f $M)
-	shortcopy $f 0 $((8 * unit)) $cs || fail "$tag: the write was not $cs bytes"
+	exp_cs=(0 "$cs" 0xab $((size - 512)) 512 0xcd)
+	xfs_io -f -c "truncate $size" -c "pwrite -q $((size - 512)) 512" -c fsync "$f"; sync
+	free0=$(stat -f -c %f "$M")
+	shortcopy "$f" 0 $((8 * unit)) "$cs" || fail "$tag: the write was not $cs bytes"
 	sync
-	free1=$(stat -f -c %f $M)
-	zeroes $f $size $exp_cs && echo "PASS: $tag contents (cache)" || fail "$tag contents (cache)"
+	free1=$(stat -f -c %f "$M")
+	if zeroes "$f" $size "${exp_cs[@]}"; then echo "PASS: $tag contents (cache)"; else fail "$tag contents (cache)"; fi
 	echo 3 > /proc/sys/vm/drop_caches
-	zeroes $f $size $exp_cs && echo "PASS: $tag contents (disk)" || fail "$tag contents (disk)"
+	if zeroes "$f" $size "${exp_cs[@]}"; then echo "PASS: $tag contents (disk)"; else fail "$tag contents (disk)"; fi
 	echo "$tag: $((free0 - free1)) clusters allocated or reserved by the short write"
-	[ $((free0 - free1)) -le 1 ] &&
-		echo "PASS: $tag keeps only the cluster written" ||
+	if [ $((free0 - free1)) -le 1 ]; then
+		echo "PASS: $tag keeps only the cluster written"
+	else
 		fail "$tag: $((free0 - free1)) clusters allocated or reserved, 1 expected"
+	fi
 	tag="short copy ending inside a cluster of a cached hole c$cs"; mark "$tag"
 	f=$M/short-tail
-	exp_tail="$cs $((cs + 512)) 0xab $((size - 512)) 512 0xcd"
-	xfs_io -f -c "truncate $size" -c "pwrite -q $((size - 512)) 512" -c fsync $f; sync
-	free0=$(stat -f -c %f $M)
-	shortcopy $f $cs $((8 * unit)) $((cs + 512)) || fail "$tag: the write was not $((cs + 512)) bytes"
+	exp_tail=("$cs" $((cs + 512)) 0xab $((size - 512)) 512 0xcd)
+	xfs_io -f -c "truncate $size" -c "pwrite -q $((size - 512)) 512" -c fsync "$f"; sync
+	free0=$(stat -f -c %f "$M")
+	shortcopy "$f" "$cs" $((8 * unit)) $((cs + 512)) || fail "$tag: the write was not $((cs + 512)) bytes"
 	sync
-	free1=$(stat -f -c %f $M)
-	zeroes $f $size $exp_tail && echo "PASS: $tag contents (cache)" || fail "$tag contents (cache)"
+	free1=$(stat -f -c %f "$M")
+	if zeroes "$f" $size "${exp_tail[@]}"; then echo "PASS: $tag contents (cache)"; else fail "$tag contents (cache)"; fi
 	echo 3 > /proc/sys/vm/drop_caches
-	zeroes $f $size $exp_tail && echo "PASS: $tag contents (disk)" || fail "$tag contents (disk)"
+	if zeroes "$f" $size "${exp_tail[@]}"; then echo "PASS: $tag contents (disk)"; else fail "$tag contents (disk)"; fi
 	echo "$tag: $((free0 - free1)) clusters allocated or reserved by the short write"
-	[ $((free0 - free1)) -le 2 ] &&
-		echo "PASS: $tag keeps only the two clusters written" ||
+	if [ $((free0 - free1)) -le 2 ]; then
+		echo "PASS: $tag keeps only the two clusters written"
+	else
 		fail "$tag: $((free0 - free1)) clusters allocated or reserved, 2 expected"
-	if [ $cs -lt 4096 ]; then
+	fi
+	if [ "$cs" -lt 4096 ]; then
 		tag="failed write over clean blocks of a dirty folio c$cs"; mark "$tag"
 		f=$M/dirty
-		exp_dirty="$((4096 - cs)) $cs 0x5a $((size - 512)) 512 0xcd"
-		xfs_io -f -c "truncate $size" -c "pwrite -q $((size - 512)) 512" -c fsync $f; sync
-		free0=$(stat -f -c %f $M)
-		xfs_io -c "pread -q 0 4096" -c "pwrite -q -S 0x5a $((4096 - cs)) $cs" $f
-		efault $f 0 $((4096 - cs))
+		exp_dirty=($((4096 - cs)) "$cs" 0x5a $((size - 512)) 512 0xcd)
+		xfs_io -f -c "truncate $size" -c "pwrite -q $((size - 512)) 512" -c fsync "$f"; sync
+		free0=$(stat -f -c %f "$M")
+		xfs_io -c "pread -q 0 4096" -c "pwrite -q -S 0x5a $((4096 - cs)) $cs" "$f"
+		efault "$f" 0 $((4096 - cs))
 		sync
-		free1=$(stat -f -c %f $M)
-		zeroes $f $size $exp_dirty && echo "PASS: $tag contents (cache)" || fail "$tag contents (cache)"
+		free1=$(stat -f -c %f "$M")
+		if zeroes "$f" $size "${exp_dirty[@]}"; then echo "PASS: $tag contents (cache)"; else fail "$tag contents (cache)"; fi
 		echo 3 > /proc/sys/vm/drop_caches
-		zeroes $f $size $exp_dirty && echo "PASS: $tag contents (disk)" || fail "$tag contents (disk)"
+		if zeroes "$f" $size "${exp_dirty[@]}"; then echo "PASS: $tag contents (disk)"; else fail "$tag contents (disk)"; fi
 		echo "$tag: $((free0 - free1)) clusters allocated or reserved by the two writes"
-		[ $((free0 - free1)) -le 1 ] &&
-			echo "PASS: $tag keeps only the cluster written" ||
+		if [ $((free0 - free1)) -le 1 ]; then
+			echo "PASS: $tag keeps only the cluster written"
+		else
 			fail "$tag: $((free0 - free1)) clusters allocated or reserved, 1 expected"
+		fi
 	fi
 	tag="partial writeback c$cs"; mark "$tag"
 	f=$M/run
-	xfs_io -f -c "pwrite -q -S 0x42 0 $((16 * unit))" $f
-	b0=$(stat -c %b $f)
-	xfs_io -c "sync_range -b -w -a 0 4096" $f
-	echo "$tag: st_blocks $b0 -> $(stat -c %b $f); extents after writeback of the first page:"
-	xfs_io -c "fiemap -v" $f | sed -n '3,6p'
-	umount $M
-	mount -i -t ntfs -o loop $IMG $M || { fail "remount c$cs"; continue; }
-	zeroes $M/f-0 $size && zeroes $M/f-full $size $((size - 512)) 512 0xcd &&
-		echo "PASS: contents after remount c$cs" || fail "contents after remount c$cs"
-	zeroes $M/short-cs $size $exp_cs && zeroes $M/short-tail $size $exp_tail && { [ $cs -ge 4096 ] || zeroes $M/dirty $size $exp_dirty; } &&
-		echo "PASS: cached hole contents after remount c$cs" ||
+	xfs_io -f -c "pwrite -q -S 0x42 0 $((16 * unit))" "$f"
+	b0=$(stat -c %b "$f")
+	xfs_io -c "sync_range -b -w -a 0 4096" "$f"
+	echo "$tag: st_blocks $b0 -> $(stat -c %b "$f"); extents after writeback of the first page:"
+	xfs_io -c "fiemap -v" "$f" | sed -n '3,6p'
+	umount "$M"
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "remount c$cs"; continue; }
+	if zeroes "$M"/f-0 $size && zeroes "$M"/f-full $size $((size - 512)) 512 0xcd; then
+		echo "PASS: contents after remount c$cs"
+	else
+		fail "contents after remount c$cs"
+	fi
+	if zeroes "$M"/short-cs $size "${exp_cs[@]}" && zeroes "$M"/short-tail $size "${exp_tail[@]}" && { [ "$cs" -ge 4096 ] || zeroes "$M"/dirty $size "${exp_dirty[@]}"; }; then
+		echo "PASS: cached hole contents after remount c$cs"
+	else
 		fail "cached hole contents after remount c$cs"
-	python3 -c "import sys; d=open(sys.argv[1],'rb').read(); sys.exit(d != b'\x42'*len(d))" $f &&
-		echo "PASS: $tag contents" || fail "$tag contents"
-	umount $M
+	fi
+	if python3 -c "import sys; d=open(sys.argv[1],'rb').read(); sys.exit(d != b'\x42'*len(d))" "$f"; then
+		echo "PASS: $tag contents"
+	else
+		fail "$tag contents"
+	fi
+	umount "$M"
 	run_ntfsck $IMG "partial-c$cs"
 done
 rm -f $IMG

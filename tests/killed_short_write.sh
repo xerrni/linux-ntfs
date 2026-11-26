@@ -16,10 +16,10 @@ for cs in $CLUSTERS; do
 	tag="killed short write c$cs"
 	mark "$tag"
 	rm -f $IMG; truncate -s 64M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount"; continue; }
-	"$BIN" $M/f $cs && echo "PASS: $tag data" || fail "$tag data"
-	umount $M
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount"; continue; }
+	if "$BIN" "$M"/f "$cs"; then echo "PASS: $tag data"; else fail "$tag data"; fi
+	umount "$M"
 	if dmesg | grep -q "after a short write"; then
 		fail "$tag: volume marked with errors"
 		dmesg -c | grep "after a short write" | head -2

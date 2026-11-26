@@ -20,18 +20,18 @@ for cs in $CLUSTERS; do
 	tag="short write c$cs"
 	mark "$tag"
 	rm -f $IMG; truncate -s 64M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount"; continue; }
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount"; continue; }
 	unit=$((cs > 4096 ? cs : 4096))
-	xfs_io -f -c "pwrite -q -S 0x11 0 $((4 * unit))" -c fsync $M/f
+	xfs_io -f -c "pwrite -q -S 0x11 0 $((4 * unit))" -c fsync "$M"/f
 	sync
-	free=$(stat -f -c %f $M)
+	free=$(stat -f -c %f "$M")
 	keep=$((4 * unit / cs))		# clusters left free
-	xfs_io -f -c "falloc 0 $(((free - keep) * cs))" $M/fill || fail "$tag fill"
+	xfs_io -f -c "falloc 0 $(((free - keep) * cs))" "$M"/fill || fail "$tag fill"
 	sync
-	echo "free clusters: $(stat -f -c %f $M) (wanted $keep)"
+	echo "free clusters: $(stat -f -c %f "$M") (wanted $keep)"
 	# append 32 units in one write(2); report the return value and the size
-	out=$(python3 - $M/f $((4 * unit)) $((32 * unit)) <<'PY'
+	out=$(python3 - "$M"/f $((4 * unit)) $((32 * unit)) <<'PY'
 import os, sys
 path, off, n = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 fd = os.open(path, os.O_WRONLY)
@@ -43,7 +43,7 @@ os.close(fd)
 print(r, os.stat(path).st_size)
 PY
 )
-	set -- $out
+	set -- "$out"
 	ret=$1 size=$2 old=$((4 * unit))
 	echo "write of $((32 * unit)) at $old returned $ret, size $size"
 	if [ "$ret" -ge $((32 * unit)) ]; then
@@ -55,10 +55,10 @@ PY
 	else
 		echo "PASS: $tag size"
 	fi
-	umount $M; mount -i -t ntfs -o loop $IMG $M
-	size2=$(stat -c %s $M/f)
+	umount "$M"; mount -i -t ntfs -o loop $IMG "$M"
+	size2=$(stat -c %s "$M"/f)
 	[ "$size2" = "$size" ] || fail "$tag: size $size2 after remount, $size before"
-	python3 - $M/f $old <<'PY' && echo "PASS: $tag data" || fail "$tag data"
+	if python3 - "$M"/f $old <<'PY'; then echo "PASS: $tag data"; else fail "$tag data"; fi
 import sys
 d = open(sys.argv[1], "rb").read()
 old = int(sys.argv[2])
@@ -66,7 +66,7 @@ assert d[:old] == b"\x11" * old, "old data changed"
 tail = d[old:].rstrip(b"\0")
 assert tail == b"\x22" * len(tail), "written data corrupt"
 PY
-	umount $M
+	umount "$M"
 	run_ntfsck $IMG "short-c$cs"
 done
 rm -f $IMG

@@ -51,7 +51,8 @@ else
 	build=$(realpath "$build")
 	export KERNEL="$build/arch/x86/boot/bzImage"
 	# the modules of this kernel; older releases may sit next to them
-	export MODULES="$build/modroot/lib/modules/$(cat "$build/include/config/kernel.release")"
+	MODULES="$build/modroot/lib/modules/$(cat "$build/include/config/kernel.release")"
+	export MODULES
 fi
 SCRIPT="$vm/vm_shell.py" TIMEOUT=${TIMEOUT:-2400} \
 	"$vm/run_vm.sh" "$work" > "$work/run.out" 2>&1 || true

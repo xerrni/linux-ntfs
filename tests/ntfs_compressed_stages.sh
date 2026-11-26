@@ -12,13 +12,13 @@
 # STAGE_CLUSTER (default 512) selects the cluster size.
 . "$HARNESS/guest_lib.sh"
 cs=${STAGE_CLUSTER:-512}
-img=$W/stages.img; rm -f $img $W/exp-ext.json $W/stage-*.img; truncate -s 64M $img
-mkntfs -F -Q -q -c $cs $img >/dev/null 2>&1 || { fail "mkntfs"; exit; }
+img=$W/stages.img; rm -f "$img" "$W"/exp-ext.json "$W"/stage-*.img; truncate -s 64M "$img"
+mkntfs -F -Q -q -c "$cs" "$img" >/dev/null 2>&1 || { fail "mkntfs"; exit; }
 records() {	# records IMG PATH: MFT numbers holding attributes of PATH
 	"$NTFSINFO" -F "$2" "$1" | sed -n 's/.*from mft record \([0-9]*\) .*/\1/p' | sort -un
 }
 text() {	# text PATH SIZE SEED [append]: compressible data, recorded in exp-ext.json
-	python3 - "$1" "$2" "$3" $W/exp-ext.json "${4:-}" <<'PY'
+	python3 - "$1" "$2" "$3" "$W"/exp-ext.json "${4:-}" <<'PY'
 import hashlib, json, os, random, sys
 p, size, seed, ef, mode = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], sys.argv[5]
 r = random.Random(seed)
@@ -42,11 +42,15 @@ PY
 }
 stage() {	# stage N: ntfsck, keep a copy, verify all files with ntfs-3g
 	echo "### stage $1 done"
-	cp --sparse=always $img $W/stage-$1.img
-	"$NTFSCK" -n $img > $W/ntfsck-stage-$1.log 2>&1 && echo "PASS: ntfsck after stage $1" ||
-		{ fail "ntfsck after stage $1"; grep -E "Inode|Index|errors" $W/ntfsck-stage-$1.log | head -6; }
-	mount_drv ntfs-3g $img ro && {
-		python3 - $W/exp-ext.json $1 <<'PY'
+	cp --sparse=always "$img" "$W"/stage-"$1".img
+	if "$NTFSCK" -n "$img" > "$W"/ntfsck-stage-"$1".log 2>&1; then
+		echo "PASS: ntfsck after stage $1"
+	else
+		fail "ntfsck after stage $1"
+		grep -E "Inode|Index|errors" "$W"/ntfsck-stage-"$1".log | head -6
+	fi
+	mount_drv ntfs-3g "$img" ro && {
+		python3 - "$W"/exp-ext.json "$1" <<'PY'
 import hashlib, json, sys
 for p, m in json.load(open(sys.argv[1])).items():
     try:
@@ -56,24 +60,25 @@ for p, m in json.load(open(sys.argv[1])).items():
         ok, msg = False, f"ERR {e.strerror}"
     print(("PASS" if ok else "FAIL") + f": stage {sys.argv[2]} ntfs-3g reads {p.rsplit('/', 1)[1]}: {msg}")
 PY
-		umount $M; }
+		umount "$M"; }
 }
-mount_drv ntfs-3g $img rw || { fail "ntfs-3g mount"; exit; }
+mount_drv ntfs-3g "$img" rw || { fail "ntfs-3g mount"; exit; }
 chunk=$((2 * cs)); [ $chunk -lt 1024 ] && chunk=1024
-python3 $HARNESS/make_fragmented.py $M $chunk
-mkdir $M/comp && setfattr -h -v 0x00000810 -n system.ntfs_attrib_be $M/comp ||
-	{ fail "set compressed directory"; exit; }
-text $M/comp/t1-ntfs3g.txt 3000000 1
-text $M/comp/t6-ntfs3g-then-ntfs.txt 300000 6
-umount $M
+python3 "$HARNESS"/make_fragmented.py "$M" $chunk
+if ! { mkdir "$M"/comp && setfattr -h -v 0x00000810 -n system.ntfs_attrib_be "$M"/comp; }; then
+	fail "set compressed directory"; exit
+fi
+text "$M"/comp/t1-ntfs3g.txt 3000000 1
+text "$M"/comp/t6-ntfs3g-then-ntfs.txt 300000 6
+umount "$M"
 stage 1
-mount_drv ntfs3 $img rw && { text $M/comp/t2-ntfs3.txt 3000000 2; umount $M; }
+mount_drv ntfs3 "$img" rw && { text "$M"/comp/t2-ntfs3.txt 3000000 2; umount "$M"; }
 stage 2
-mount_drv ntfs $img rw && { text $M/comp/t3-ntfs.txt 3000000 3 2>&1 | tail -1; umount $M; }
+mount_drv ntfs "$img" rw && { text "$M"/comp/t3-ntfs.txt 3000000 3 2>&1 | tail -1; umount "$M"; }
 stage 3
-mount_drv ntfs $img rw && { text $M/comp/t6-ntfs3g-then-ntfs.txt 3000000 7 append 2>&1 | tail -1; umount $M; }
+mount_drv ntfs "$img" rw && { text "$M"/comp/t6-ntfs3g-then-ntfs.txt 3000000 7 append 2>&1 | tail -1; umount "$M"; }
 stage 4
-mount_drv ntfs $img rw && { python3 - $M/comp/t1-ntfs3g.txt $W/exp-ext.json <<'PY'
+mount_drv ntfs "$img" rw && { python3 - "$M"/comp/t1-ntfs3g.txt "$W"/exp-ext.json <<'PY'
 import hashlib, json, sys
 p, ef = sys.argv[1], sys.argv[2]
 with open(p, "r+b") as f:
@@ -82,7 +87,7 @@ data = open(p, "rb").read()
 e = json.load(open(ef)); e[p] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
 json.dump(e, open(ef, "w"), indent=1)
 PY
-umount $M; }
+umount "$M"; }
 stage 5
 dmesg | grep -E "ntfs3\(|ntfs:" | grep -v "volume version\|put_super" | head -30
 dmesg_check

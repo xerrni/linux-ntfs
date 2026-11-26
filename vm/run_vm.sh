@@ -29,7 +29,7 @@ case "${1:-}" in -h|--help|"") sed -n '3,/^set -euo/p' "$0" | sed '$d; s/^# \{0,
 
 work=$(realpath -m "$1")
 here=$(cd "$(dirname "$0")" && pwd)
-kver=${KVER:-$(ls /usr/lib/modules 2>/dev/null | sort -V | tail -n 1 || true)}	# none in a container
+kver=${KVER:-$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort -V | tail -n 1 || true)}	# none in a container
 kernel=${KERNEL:-/boot/vmlinuz-linux}
 mods=${MODULES:-/usr/lib/modules/$kver}
 mkdir -p "$work"

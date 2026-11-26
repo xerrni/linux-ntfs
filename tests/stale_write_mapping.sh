@@ -15,19 +15,19 @@ BIN=$HARNESS/stale_write_mapping
 [ -x "$BIN" ] || { fail "build $BIN on the host first"; exit 0; }
 for cs in $CLUSTERS; do
 	rm -f $IMG; truncate -s 64M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "mkntfs c$cs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "mount c$cs"; continue; }
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "mkntfs c$cs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "mount c$cs"; continue; }
 	unit=$((cs > 4096 ? cs : 4096))
 	for init in 0 full; do
 		tag="stale write mapping init=$init c$cs"
 		mark "$tag"
 		f=$M/f-$init
-		xfs_io -f -c "truncate $((16 * unit))" $f
-		[ $init = full ] && xfs_io -c "pwrite -q $((16 * unit - 512)) 512" $f
-		xfs_io -c fsync $f
-		"$BIN" $f $((4 * unit)) && echo "PASS: $tag" || fail "$tag"
+		xfs_io -f -c "truncate $((16 * unit))" "$f"
+		[ $init = full ] && xfs_io -c "pwrite -q $((16 * unit - 512)) 512" "$f"
+		xfs_io -c fsync "$f"
+		if "$BIN" "$f" $((4 * unit)); then echo "PASS: $tag"; else fail "$tag"; fi
 	done
-	umount $M
+	umount "$M"
 	run_ntfsck $IMG "stalewm-c$cs"
 done
 dmesg_check

@@ -6,12 +6,16 @@
 # volume with each driver so their caches are in use.
 . "$HARNESS/guest_lib.sh"
 grep -wE "ntfs|ntfs3" /proc/filesystems
-img=$W/slab.img; rm -f $img; truncate -s 64M $img
-mkntfs -F -Q -q $img >/dev/null 2>&1
+img=$W/slab.img; rm -f "$img"; truncate -s 64M "$img"
+mkntfs -F -Q -q "$img" >/dev/null 2>&1
 for drv in ntfs ntfs3; do
-	mount_drv $drv $img rw && { echo x > $M/f-$drv; umount $M; } || fail "mount $drv"
+	if mount_drv $drv "$img" rw; then
+		echo x > "$M"/f-$drv; umount "$M"
+	else
+		fail "mount $drv"
+	fi
 done
-rm -f $img
+rm -f "$img"
 grep -E "^ntfs" /proc/slabinfo | awk '{print $1}'
 dup=$(awk 'NR > 2 {print $1}' /proc/slabinfo | sort | uniq -d)
 if [ -n "$dup" ]; then fail "duplicate slab cache names: $dup"; else echo "PASS: slab cache names unique"; fi

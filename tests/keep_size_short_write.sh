@@ -19,9 +19,9 @@ for cs in $CLUSTERS; do
 	tag="keep-size short write c$cs"
 	mark "$tag"
 	rm -f $IMG; truncate -s 64M $IMG
-	mkntfs -F -Q -q -c $cs $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag mount"; continue; }
-	python3 - $M/f $cs before <<'PY' || fail "$tag"
+	mkntfs -F -Q -q -c "$cs" $IMG >/dev/null 2>&1 || { fail "$tag mkntfs"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag mount"; continue; }
+	python3 - "$M"/f "$cs" before <<'PY' || fail "$tag"
 import ctypes, mmap, os, sys
 path, cs, phase = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 old = 16 * cs
@@ -70,10 +70,10 @@ if bad:
     sys.exit("; ".join(bad))
 print("ok", flush=True)
 PY
-	r=$(cat $M/f.r 2>/dev/null); rm -f $M/f.r
-	umount $M || { fail "$tag umount"; continue; }
-	mount -i -t ntfs -o loop $IMG $M || { fail "$tag remount"; continue; }
-	python3 - $M/f $cs "$r" <<'PY' && echo "PASS: $tag" || fail "$tag"
+	r=$(cat "$M"/f.r 2>/dev/null); rm -f "$M"/f.r
+	umount "$M" || { fail "$tag umount"; continue; }
+	mount -i -t ntfs -o loop $IMG "$M" || { fail "$tag remount"; continue; }
+	if python3 - "$M"/f "$cs" "$r" <<'PY'; then echo "PASS: $tag"; else fail "$tag"; fi
 import os, sys
 path, cs, r = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 st = os.stat(path)
@@ -86,7 +86,7 @@ if st.st_blocks * 512 < 48 * cs:
 if bad:
     sys.exit("; ".join(bad))
 PY
-	umount $M
+	umount "$M"
 	run_ntfsck $IMG "c$cs"
 done
 dmesg_check

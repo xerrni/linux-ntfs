@@ -48,30 +48,30 @@ PY
 }
 cs=${FRAG_CLUSTER:-512}
 hole=$(( ${FRAG_HOLE_CLUSTERS:-2} * cs )); [ $hole -lt 1024 ] && hole=1024
-img=$W/frag-$cs.img; rm -f $img; truncate -s ${FRAG_VOLUME_MB:-32}M $img
-mkntfs -F -Q -q -c $cs $img >/dev/null 2>&1 || { fail "mkntfs"; exit; }
+img=$W/frag-$cs.img; rm -f "$img"; truncate -s "${FRAG_VOLUME_MB:-32}"M "$img"
+mkntfs -F -Q -q -c "$cs" "$img" >/dev/null 2>&1 || { fail "mkntfs"; exit; }
 if [ "${CREATOR:-ntfs}" = ntfs-3g ]; then
-	mount_drv ntfs-3g $img rw || { fail "ntfs-3g mount"; exit; }
-	python3 $HARNESS/make_fragmented.py $M $hole
-	mkdir $M/comp && setfattr -h -v 0x00000810 -n system.ntfs_attrib_be $M/comp
-	gen_text $M $W/frag-expect.json ${FRAG_WRITE_KB:-256} 20
-	umount $M
-	mount_drv ntfs $img rw || { fail "ntfs mount"; exit; }
+	mount_drv ntfs-3g "$img" rw || { fail "ntfs-3g mount"; exit; }
+	python3 "$HARNESS"/make_fragmented.py "$M" $hole
+	mkdir "$M"/comp && setfattr -h -v 0x00000810 -n system.ntfs_attrib_be "$M"/comp
+	gen_text "$M" "$W"/frag-expect.json "${FRAG_WRITE_KB:-256}" 20
+	umount "$M"
+	mount_drv ntfs "$img" rw || { fail "ntfs mount"; exit; }
 else
-	mount_drv ntfs $img rw || { fail "ntfs mount"; exit; }
-	python3 $HARNESS/make_fragmented.py $M $hole
-	mkdir $M/comp
-	: > $M/comp/c.txt
-	setfattr -h -v 0x00000800 -n system.ntfs_attrib_be $M/comp/c.txt || fail "set compressed"
+	mount_drv ntfs "$img" rw || { fail "ntfs mount"; exit; }
+	python3 "$HARNESS"/make_fragmented.py "$M" $hole
+	mkdir "$M"/comp
+	: > "$M"/comp/c.txt
+	setfattr -h -v 0x00000800 -n system.ntfs_attrib_be "$M"/comp/c.txt || fail "set compressed"
 fi
-getfattr -h -e hex -n system.ntfs_attrib_be $M/comp/c.txt
-gen_text $M $W/frag-expect.json ${FRAG_WRITE_KB:-256} 0 || fail "kernel write"
-umount $M
-python3 $HARNESS/dump_attr_headers.py $img $(mft_no $img /comp/c.txt) | grep -E "DATA"
-run_ntfsck $img frag-$cs
+getfattr -h -e hex -n system.ntfs_attrib_be "$M"/comp/c.txt
+gen_text "$M" "$W"/frag-expect.json "${FRAG_WRITE_KB:-256}" 0 || fail "kernel write"
+umount "$M"
+python3 "$HARNESS"/dump_attr_headers.py "$img" "$(mft_no "$img" /comp/c.txt)" | grep -E "DATA"
+run_ntfsck "$img" frag-"$cs"
 for drv in ntfs ntfs-3g ntfs3; do
-	mount_drv $drv $img ro || { fail "mount $drv"; continue; }
-	python3 - $M $W/frag-expect.json $drv <<'PY'
+	mount_drv $drv "$img" ro || { fail "mount $drv"; continue; }
+	python3 - "$M" "$W"/frag-expect.json $drv <<'PY'
 import hashlib, json, os, sys
 mnt, e, drv = sys.argv[1], json.load(open(sys.argv[2])), sys.argv[3]
 bad = []
@@ -88,7 +88,7 @@ try:
 except OSError as x:
     print(f"FAIL: {drv}: compressed file {x.strerror}")
 PY
-	umount $M
+	umount "$M"
 done
 dmesg | grep -E "ntfs3\(|ntfs:" | grep -v "volume version\|put_super" | tail -8
 dmesg_check

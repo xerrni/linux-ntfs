@@ -16,8 +16,8 @@ RUNS=${RUNS:-3}
 IMG=/mnt/wbcost.img
 rm -f $IMG; truncate -s $((FILE_MB * 2 + 256))M $IMG
 mkntfs -F -Q -q -c 4096 $IMG >/dev/null 2>&1 || { fail "mkntfs"; exit 0; }
-mount -i -t ntfs -o loop $IMG $M || { fail "mount"; exit 0; }
-python3 - $M $FILE_MB $EXTENTS $RUNS <<'PY'
+mount -i -t ntfs -o loop $IMG "$M" || { fail "mount"; exit 0; }
+python3 - "$M" "$FILE_MB" "$EXTENTS" "$RUNS" <<'PY'
 import os, sys, time
 mnt, mb, extents, runs = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 size = mb << 20
@@ -50,7 +50,7 @@ for name, fd, length in (("contig", c, size), ("frag", f, extents * chunk)):
         os.fsync(fd)
         print(f"{name} run {r}: fsync of {length >> 20} MiB took {time.monotonic() - t:.3f} s", flush=True)
 PY
-filefrag $M/frag 2>/dev/null | tail -1
-umount $M
+filefrag "$M"/frag 2>/dev/null | tail -1
+umount "$M"
 dmesg_check
 echo "### done"
