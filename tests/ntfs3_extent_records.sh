@@ -85,7 +85,7 @@ PY
 umount "$M"
 for f in /comp/t1-ntfs3g.txt /comp/t2-ntfs3.txt /comp/t3-ntfs.txt /t4-ntfs3g.bin /t5-ntfs.bin; do
 	echo "--- $f"
-	mapfile -t recs < <(records "$img" "$f")
+	read -ra recs <<< "$(records "$img" "$f" | tr '\n' ' ')"
 	python3 "$HARNESS"/dump_attr_headers.py "$img" "${recs[@]}" | grep -E "^record|\\\$DATA"
 done
 run_ntfsck "$img" ext-"$cs"

@@ -88,7 +88,7 @@ print("END", n - 1)
 PY
 	dmesg > "$W"/dmesg-c"$cs".txt
 	grep -v "^DELTA\|^BLOCKS" "$W"/scan.txt
-	read -ra hit < <(grep ^HIT "$W"/scan.txt)
+	read -ra hit <<< "$(grep -m 1 ^HIT "$W"/scan.txt)"
 	set -- "${hit[@]}"
 	if [ $# = 0 ]; then
 		fail "$tag: no injected failure reached ntfs_cluster_alloc()"

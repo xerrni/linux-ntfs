@@ -87,7 +87,7 @@ section_tests() {	# SECTION: the tests of PAIRS in it
 : > "$W"/check.out
 for s in $SECTIONS; do
 	s=${s%%:*}
-	mapfile -t stests < <(section_tests "$s")
+	read -ra stests <<< "$(section_tests "$s" | tr '\n' ' ')"
 	[ ${#stests[@]} -gt 0 ] || continue
 	mark "fstests $s:" "${stests[*]}"
 	(cd /mnt/xfstests && ./check -s "$s" -R xunit "${stests[@]}") >> "$W"/check.out 2>&1
@@ -97,7 +97,7 @@ cat "$W"/check.out
 # one line per test and section, from the xunit report of each section
 for s in $SECTIONS; do
 	s=${s%%:*}
-	mapfile -t stests < <(section_tests "$s")
+	read -ra stests <<< "$(section_tests "$s" | tr '\n' ' ')"
 	[ ${#stests[@]} -gt 0 ] || continue
 	python3 - "$W/fstests-results/$s/result.xml" "$s" "${stests[@]}" <<'EOF'
 import sys

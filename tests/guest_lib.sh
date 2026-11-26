@@ -2,6 +2,8 @@
 # Helpers for guest scripts run by run_guest_script.sh (source it).
 # Mount point: $W/mnt. Kernel driver: always "mount -i -t ntfs" (plain
 # "mount -t ntfs" would run the ntfs-3g helper).
+# The VM has no /dev/fd, so process substitution (<(...)) fails in guest
+# scripts; read command output with a here-string: read -ra x <<< "$(cmd)".
 set +e
 W=$PWD
 M=$W/mnt
