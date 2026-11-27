@@ -1,4 +1,4 @@
-From b05f060cfb542d70fd3438f72d2e631fa7a957c1 Mon Sep 17 00:00:00 2001
+From 9cfaa6b53cf05e738de8112f396f342f564fb0c1 Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 2/4] generic: check the size after a buffered write runs out

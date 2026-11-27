@@ -1,4 +1,4 @@
-From a9ad7e0ec8012b592d3f34bc312ddc5fd66e0941 Mon Sep 17 00:00:00 2001
+From ca0e2bb865c4e2abbf387e1ec3fc5b1f68cf7177 Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 1/4] common: add support for the ntfs driver
