@@ -1,4 +1,4 @@
-From 418551ab4c012392471b628fbc7e5f1ad985b43d Mon Sep 17 00:00:00 2001
+From 7969d94d53bd19dd6d79c878a46c5cad4c730584 Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 2/4] generic: check the size after a buffered write runs out
@@ -23,18 +23,18 @@ space with writes, but only checks that some data was written.
 
 Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
 ---
- tests/generic/816     | 90 +++++++++++++++++++++++++++++++++++++++++++
+ tests/generic/816     | 91 +++++++++++++++++++++++++++++++++++++++++++
  tests/generic/816.out |  2 +
- 2 files changed, 92 insertions(+)
+ 2 files changed, 93 insertions(+)
  create mode 100755 tests/generic/816
  create mode 100644 tests/generic/816.out
 
 diff --git a/tests/generic/816 b/tests/generic/816
 new file mode 100755
-index 00000000..6353ded7
+index 00000000..625a8429
 --- /dev/null
 +++ b/tests/generic/816
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,91 @@
 +#! /bin/bash
 +# SPDX-License-Identifier: GPL-2.0
 +# Copyright (c) 2026 Ernest Borowski <ernest.borowski.git@proton.me>.  All Rights Reserved.
@@ -107,6 +107,7 @@ index 00000000..6353ded7
 +}
 +
 +check_size "after the write"
++# shellcheck disable=SC2119 # the mount options argument is optional
 +_scratch_cycle_mount
 +check_size "after remount"
 +

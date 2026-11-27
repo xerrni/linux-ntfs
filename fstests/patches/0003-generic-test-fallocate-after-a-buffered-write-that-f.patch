@@ -1,4 +1,4 @@
-From 003e216ae9bdd82f9bcbe92d722e1b7768e9730d Mon Sep 17 00:00:00 2001
+From e6195d03b29abeb00589884319407a320bb0c124 Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 3/4] generic: test fallocate after a buffered write that
@@ -26,9 +26,9 @@ Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
  .gitignore              |   1 +
  src/Makefile            |   2 +-
  src/pwrite-short-copy.c | 101 ++++++++++++++++++++++++++++++++++++++++
- tests/generic/817       |  83 +++++++++++++++++++++++++++++++++
+ tests/generic/817       |  84 +++++++++++++++++++++++++++++++++
  tests/generic/817.out   |   2 +
- 5 files changed, 188 insertions(+), 1 deletion(-)
+ 5 files changed, 189 insertions(+), 1 deletion(-)
  create mode 100644 src/pwrite-short-copy.c
  create mode 100755 tests/generic/817
  create mode 100644 tests/generic/817.out
@@ -167,10 +167,10 @@ index 00000000..2f1c36a3
 +}
 diff --git a/tests/generic/817 b/tests/generic/817
 new file mode 100755
-index 00000000..2c20293b
+index 00000000..0f87b389
 --- /dev/null
 +++ b/tests/generic/817
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,84 @@
 +#! /bin/bash
 +# SPDX-License-Identifier: GPL-2.0
 +# Copyright (c) 2026 Ernest Borowski <ernest.borowski.git@proton.me>.  All Rights Reserved.
@@ -246,6 +246,7 @@ index 00000000..2c20293b
 +done
 +
 +# Read everything back from the disk.
++# shellcheck disable=SC2119 # the mount options argument is optional
 +_scratch_cycle_mount
 +for op in none punch collapse insert write; do
 +	cmp -s "$SCRATCH_MNT/$op" "$tmp.$op" || \
