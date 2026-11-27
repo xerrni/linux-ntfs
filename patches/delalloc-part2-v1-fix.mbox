@@ -1,0 +1,665 @@
+From 2c54b5ed4e5e806499693a0f7fdccb5b8027444a Mon Sep 17 00:00:00 2001
+From: Ernest Borowski <ernest.borowski.git@proton.me>
+Date: Sat, 14 Nov 2026 15:54:08 +0100
+Subject: [PATCH 1/5] ntfs: take allocated delalloc clusters out of
+ i_dealloc_clusters once
+
+i_dealloc_clusters counts the delalloc clusters of an inode and is added
+to st_blocks by getattr.  When writeback allocates a delalloc run,
+ntfs_write_da_iomap_begin_non_resident() subtracts the allocated
+clusters from it.  But when ntfs_attr_map_cluster() rewrites the mapping
+pairs right away (update_mp: named streams, system files, and any file
+once the volume has 5 % or less free space),
+__ntfs_attr_update_mapping_pairs() has already recounted
+i_dealloc_clusters from the runlist, so the run is subtracted twice and
+st_blocks drops by the size of the run while the rest of the delayed
+data is still not allocated.  On top of that, a failed allocation sets
+i_dealloc_clusters to 0 although every delalloc run of the inode is
+still there.
+
+Reproducer: on a volume with 3 % free space write 1 MiB at 0 and 1 MiB
+at 2 MiB of a new file, then sync_file_range() the first MiB.  st_blocks
+goes from 4096 to 2048 although it is 4096 again after the second run is
+written, and stays 4096 after a remount.
+
+Subtract the run in ntfs_attr_map_cluster() on the path that does not
+recount, and leave i_dealloc_clusters alone when the allocation fails.
+
+Fixes: b041ca562526 ("ntfs: update iomap and address space operations")
+Cc: stable@vger.kernel.org
+---
+ fs/ntfs/attrib.c | 7 +++++++
+ fs/ntfs/iomap.c  | 9 +--------
+ 2 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/fs/ntfs/attrib.c b/fs/ntfs/attrib.c
+index 4ec4ca3d87..fa46c68fdc 100644
+--- a/fs/ntfs/attrib.c
++++ b/fs/ntfs/attrib.c
+@@ -5690,6 +5690,13 @@ int ntfs_attr_map_cluster(struct ntfs_inode *ni, s64 vcn_start, s64 *lcn_start,
+ 		}
+ 	} else {
+ 		VFS_I(ni)->i_blocks += clu_count << (vol->cluster_size_bits - 9);
++		/*
++		 * Rewriting the mapping pairs above recounts
++		 * i_dealloc_clusters, so only this path takes the run out.
++		 */
++		if (was_delalloc)
++			ni->i_dealloc_clusters -= min_t(s64, clu_count,
++							ni->i_dealloc_clusters);
+ 		NInoSetRunlistDirty(ni);
+ 		mark_mft_record_dirty(base_ni);
+ 	}
+diff --git a/fs/ntfs/iomap.c b/fs/ntfs/iomap.c
+index bdb176fdd4..e284531dec 100644
+--- a/fs/ntfs/iomap.c
++++ b/fs/ntfs/iomap.c
+@@ -623,10 +623,8 @@ static int ntfs_write_da_iomap_begin_non_resident(struct inode *inode,
+ 			ntfs_iomap_flags & NTFS_IOMAP_FLAGS_WRITEBACK);
+ 	up_write(&ni->runlist.lock);
+ 	mutex_unlock(&mrec_ni->mrec_lock);
+-	if (err) {
+-		ni->i_dealloc_clusters = 0;
++	if (err)
+ 		return err;
+-	}
+ 
+ 	iomap->bdev = inode->i_sb->s_bdev;
+ 	iomap->offset = offset;
+@@ -664,11 +662,6 @@ static int ntfs_write_da_iomap_begin_non_resident(struct inode *inode,
+ 							  (start_lcn + lcn_count - 1) <<
+ 							  vol->cluster_size_bits,
+ 							  vol->cluster_size);
+-		} else {
+-			if (lcn_count > ni->i_dealloc_clusters)
+-				ni->i_dealloc_clusters = 0;
+-			else
+-				ni->i_dealloc_clusters -= lcn_count;
+ 		}
+ 		if (err < 0)
+ 			return err;
+-- 
+2.56.1
+
+
+From a51fbc4ef301cdbdb95a66e186e840620ad6978d Mon Sep 17 00:00:00 2001
+From: Ernest Borowski <ernest.borowski.git@proton.me>
+Date: Sat, 14 Nov 2026 15:55:13 +0100
+Subject: [PATCH 2/5] ntfs: keep the allocation of a named stream on the stream
+ inode
+
+A named stream has an inode of its own, and ntfs_read_locked_attr_inode()
+sets its i_blocks from the stream's allocated (or compressed) size, while
+the base inode's i_blocks describes the unnamed data stream.  Once the
+stream's runlist changes, though, ntfs_attr_update_meta(),
+ntfs_non_resident_attr_shrink() and the rollback in
+ntfs_non_resident_attr_expand() store the stream's size in the i_blocks
+of the base inode.  st_blocks of the stream then stays at what it was
+when the inode was read, and st_blocks of the file shows the size of its
+stream, until the inodes are read again.
+
+Reproducer: write 1 MiB into the named stream of an empty file and
+fsync it.  stat of the stream reports 0 blocks and stat of the file
+2048, and the other way round after a remount.
+
+Set i_blocks on the stream inode for named streams.  The other
+attribute inodes keep reporting on the base inode, so a directory still
+shows the size of its index allocation.
+
+Fixes: 495e90fa3348 ("ntfs: update attrib operations")
+Cc: stable@vger.kernel.org
+---
+ fs/ntfs/attrib.c | 39 +++++++++++++++++++++++----------------
+ 1 file changed, 23 insertions(+), 16 deletions(-)
+
+diff --git a/fs/ntfs/attrib.c b/fs/ntfs/attrib.c
+index fa46c68fdc..ec4cef807c 100644
+--- a/fs/ntfs/attrib.c
++++ b/fs/ntfs/attrib.c
+@@ -3720,6 +3720,22 @@ int ntfs_attr_record_move_away(struct ntfs_attr_search_ctx *ctx, int extra)
+ 	return err;
+ }
+ 
++/*
++ * Set i_blocks from the allocation of the attribute @ni.  A named stream
++ * reports its own allocation, like ntfs_read_locked_attr_inode() sets it;
++ * other attribute inodes (the directory index) report on @base_ni.
++ */
++static void ntfs_attr_update_i_blocks(struct ntfs_inode *ni,
++				      struct ntfs_inode *base_ni)
++{
++	struct inode *vi = VFS_I(ntfs_inode_is_named_stream(ni) ? ni : base_ni);
++
++	if (NInoSparse(ni) || NInoCompressed(ni))
++		vi->i_blocks = ni->itype.compressed.size >> 9;
++	else
++		vi->i_blocks = ni->allocated_size >> 9;
++}
++
+ /*
+  * If we are in the first extent, then set/clean sparse bit,
+  * update allocated and compressed size.
+@@ -3838,10 +3854,7 @@ static int ntfs_attr_update_meta(struct attr_record *a, struct ntfs_inode *ni,
+ 		a->data.non_resident.compressed_size = cpu_to_le64(new_compr_size);
+ 	}
+ 
+-	if (NInoSparse(ni) || NInoCompressed(ni))
+-		VFS_I(base_ni)->i_blocks = ni->itype.compressed.size >> 9;
+-	else
+-		VFS_I(base_ni)->i_blocks = ni->allocated_size >> 9;
++	ntfs_attr_update_i_blocks(ni, base_ni);
+ 	/*
+ 	 * Set FILE_NAME dirty flag, to update sparse bit and
+ 	 * allocated size in the index.
+@@ -4593,14 +4606,10 @@ static int ntfs_non_resident_attr_shrink(struct ntfs_inode *ni,
+ 		/* Prepare to mapping pairs update. */
+ 		ni->allocated_size = ntfs_cluster_to_bytes(vol, first_free_vcn);
+ 
+-		if (NInoSparse(ni) || NInoCompressed(ni)) {
+-			if (nr_freed_clusters) {
+-				ni->itype.compressed.size -=
+-					ntfs_cluster_to_bytes(vol, nr_freed_clusters);
+-				VFS_I(base_ni)->i_blocks = ni->itype.compressed.size >> 9;
+-			}
+-		} else
+-			VFS_I(base_ni)->i_blocks = ni->allocated_size >> 9;
++		if ((NInoSparse(ni) || NInoCompressed(ni)) && nr_freed_clusters)
++			ni->itype.compressed.size -=
++				ntfs_cluster_to_bytes(vol, nr_freed_clusters);
++		ntfs_attr_update_i_blocks(ni, base_ni);
+ 
+ 		/* Write mapping pairs for new runlist. */
+ 		err = ntfs_attr_update_mapping_pairs_locked(ni, 0, ni);
+@@ -4997,11 +5006,9 @@ static int ntfs_non_resident_attr_expand(struct ntfs_inode *ni, const s64 newsiz
+ 		if (__ntfs_attr_update_mapping_pairs(ni, 0, ni, true))
+ 			ntfs_error(sb, "Failed to restore old mapping pairs");
+ 
+-		if (NInoSparse(ni) || NInoCompressed(ni)) {
++		if (NInoSparse(ni) || NInoCompressed(ni))
+ 			ni->itype.compressed.size =  org_compressed_size;
+-			VFS_I(base_ni)->i_blocks = ni->itype.compressed.size >> 9;
+-		} else
+-			VFS_I(base_ni)->i_blocks = ni->allocated_size >> 9;
++		ntfs_attr_update_i_blocks(ni, base_ni);
+ 	}
+ 	if (!runlist_locked)
+ 		up_write(&ni->runlist.lock);
+-- 
+2.56.1
+
+
+From 9505df5fb672adee95e99698562fedadb2d510be Mon Sep 17 00:00:00 2001
+From: Ernest Borowski <ernest.borowski.git@proton.me>
+Date: Sat, 14 Nov 2026 16:01:47 +0100
+Subject: [PATCH 3/5] ntfs: zero a cluster allocated by a write fault before
+ mapping it
+
+A write fault into a hole of an mmap()ed file allocates the cluster in
+ntfs_write_da_iomap_begin_non_resident(): ntfs_attr_map_cluster() puts
+the new cluster numbers into the runlist and drops the runlist lock and
+mrec_lock, and only then is the cluster zeroed on disk with
+ntfs_dio_zero_range().  The faulting folio is in the page cache, but
+when the cluster is larger than the folio, the rest of the cluster is
+not: a read of it in that window, through read(), another mapping or
+splice(), maps the new cluster and reads what it held before, data of
+a deleted file.  The page cache keeps that copy after the zeroing, so
+the old data stays visible until the folios are dropped.
+
+Reproducer: fill the free space of a volume with 64 KiB clusters with
+a marker pattern and delete it, create a sparse file, and store single
+bytes into its holes through a shared mapping while other processes
+read the clusters being faulted in through new mappings and splice()
+after dropping the page cache.  The marker shows up within seconds.
+
+Zero the new clusters in ntfs_attr_map_cluster(), before they are
+merged into the runlist, when the faulting range does not cover whole
+clusters.
+
+Fixes: b041ca562526 ("ntfs: update iomap and address space operations")
+Cc: stable@vger.kernel.org
+---
+ fs/ntfs/attrib.c | 28 +++++++++++++++++++++++++---
+ fs/ntfs/attrib.h |  3 ++-
+ fs/ntfs/iomap.c  | 14 ++++++++++----
+ 3 files changed, 37 insertions(+), 8 deletions(-)
+
+diff --git a/fs/ntfs/attrib.c b/fs/ntfs/attrib.c
+index ec4cef807c..f2d5fafbf4 100644
+--- a/fs/ntfs/attrib.c
++++ b/fs/ntfs/attrib.c
+@@ -5515,7 +5515,7 @@ static void ntfs_map_cluster_rehold(struct ntfs_volume *vol, bool was_delalloc,
+ 
+ int ntfs_attr_map_cluster(struct ntfs_inode *ni, s64 vcn_start, s64 *lcn_start,
+ 		s64 *lcn_count, s64 max_clu_count, bool *balloc, bool update_mp,
+-		bool skip_holes)
++		bool skip_holes, bool zero_new)
+ {
+ 	struct ntfs_inode *base_ni = ntfs_base_inode(ni);
+ 	struct ntfs_volume *vol = ni->vol;
+@@ -5623,6 +5623,26 @@ int ntfs_attr_map_cluster(struct ntfs_inode *ni, s64 vcn_start, s64 *lcn_start,
+ 	WARN_ON(rlc->vcn != vcn);
+ 	lcn = rlc->lcn;
+ 	clu_count = rlc->length;
++	/*
++	 * Zero the clusters before the runlist shows them: from then on
++	 * readers map them, and they must not see what the clusters held
++	 * before.
++	 */
++	if (zero_new) {
++		err = ntfs_dio_zero_range(VFS_I(ni),
++					  ntfs_cluster_to_bytes(vol, lcn),
++					  ntfs_cluster_to_bytes(vol, clu_count));
++		if (err) {
++			ntfs_map_cluster_rehold(vol, was_delalloc, clu_count);
++			if (ntfs_cluster_free_from_rl(vol, rlc)) {
++				ntfs_error(vol->sb,
++					   "Failed to free clusters that could not be zeroed.");
++				NVolSetErrors(vol);
++			}
++			kvfree(rlc);
++			goto out;
++		}
++	}
+ 	old_rl_count = ni->runlist.count;
+ 	old_rl = kmemdup(ni->runlist.rl,
+ 			 old_rl_count * sizeof(*old_rl), GFP_NOFS);
+@@ -6278,7 +6298,8 @@ int ntfs_attr_fallocate(struct ntfs_inode *ni, loff_t start, loff_t byte_len, bo
+ 						NTFS_INODE_MUTEX_NORMAL);
+ 				down_write(&ni->runlist.lock);
+ 				err = ntfs_attr_map_cluster(ni, vcn, &lcn, &alloc_cnt,
+-							    try_alloc_cnt, &balloc, false, false);
++							    try_alloc_cnt, &balloc, false, false,
++							    false);
+ 				up_write(&ni->runlist.lock);
+ 				mutex_unlock(&base_ni->mrec_lock);
+ 				if (err)
+@@ -6311,7 +6332,8 @@ int ntfs_attr_fallocate(struct ntfs_inode *ni, loff_t start, loff_t byte_len, bo
+ 		mutex_lock_nested(&base_ni->mrec_lock, NTFS_INODE_MUTEX_NORMAL);
+ 		down_write(&ni->runlist.lock);
+ 		err = ntfs_attr_map_cluster(ni, vcn, &lcn, &alloc_cnt,
+-					    try_alloc_cnt, &balloc, false, false);
++					    try_alloc_cnt, &balloc, false, false,
++					    false);
+ 		up_write(&ni->runlist.lock);
+ 		mutex_unlock(&base_ni->mrec_lock);
+ 		if (err || fatal_signal_pending(current))
+diff --git a/fs/ntfs/attrib.h b/fs/ntfs/attrib.h
+index ca2a8b53a4..6230a71196 100644
+--- a/fs/ntfs/attrib.h
++++ b/fs/ntfs/attrib.h
+@@ -94,7 +94,8 @@ int ntfs_attr_size_bounds_check(const struct ntfs_volume *vol,
+ int ntfs_attr_can_be_resident(const struct ntfs_volume *vol,
+ 		const __le32 type);
+ int ntfs_attr_map_cluster(struct ntfs_inode *ni, s64 vcn_start, s64 *lcn_start,
+-		s64 *lcn_count, s64 max_clu_count, bool *balloc, bool update_mp, bool skip_holes);
++		s64 *lcn_count, s64 max_clu_count, bool *balloc, bool update_mp,
++		bool skip_holes, bool zero_new);
+ int ntfs_attr_record_resize(struct mft_record *m, struct attr_record *a, u32 new_size);
+ int ntfs_resident_attr_value_resize(struct mft_record *m, struct attr_record *a,
+ 		const u32 new_size);
+diff --git a/fs/ntfs/iomap.c b/fs/ntfs/iomap.c
+index e284531dec..b7142d633f 100644
+--- a/fs/ntfs/iomap.c
++++ b/fs/ntfs/iomap.c
+@@ -607,7 +607,7 @@ static int ntfs_write_da_iomap_begin_non_resident(struct inode *inode,
+ 	struct ntfs_volume *vol = ni->vol;
+ 	loff_t vcn_ofs, rl_length;
+ 	s64 vcn, start_lcn, lcn_count;
+-	bool balloc = false, update_mp;
++	bool balloc = false, update_mp, zero_new;
+ 	int err;
+ 	s64 max_clu_count =
+ 		ntfs_bytes_to_cluster(vol, round_up(length, vol->cluster_size));
+@@ -617,10 +617,17 @@ static int ntfs_write_da_iomap_begin_non_resident(struct inode *inode,
+ 
+ 	update_mp = ntfs_iomap_flags & (NTFS_IOMAP_FLAGS_DIO | NTFS_IOMAP_FLAGS_MKWRITE) ||
+ 			NInoAttr(ni) || ni->mft_no < FILE_first_user;
++	/*
++	 * A write fault into a hole dirties only the faulting folio: the rest
++	 * of a cluster that the folio does not cover has to be zeroed on disk
++	 * before other readers can map the cluster.
++	 */
++	zero_new = ntfs_iomap_flags & NTFS_IOMAP_FLAGS_MKWRITE &&
++		   (offset | length) & vol->cluster_size_mask;
+ 	down_write(&ni->runlist.lock);
+ 	err = ntfs_attr_map_cluster(ni, vcn, &start_lcn, &lcn_count,
+ 			max_clu_count, &balloc, update_mp,
+-			ntfs_iomap_flags & NTFS_IOMAP_FLAGS_WRITEBACK);
++			ntfs_iomap_flags & NTFS_IOMAP_FLAGS_WRITEBACK, zero_new);
+ 	up_write(&ni->runlist.lock);
+ 	mutex_unlock(&mrec_ni->mrec_lock);
+ 	if (err)
+@@ -645,8 +652,7 @@ static int ntfs_write_da_iomap_begin_non_resident(struct inode *inode,
+ 	iomap->addr = ntfs_cluster_to_bytes(vol, start_lcn) + vcn_ofs;
+ 
+ 	if (balloc == true) {
+-		if (flags & IOMAP_DIRECT ||
+-		    ntfs_iomap_flags & NTFS_IOMAP_FLAGS_MKWRITE) {
++		if (flags & IOMAP_DIRECT) {
+ 			loff_t end = offset + length;
+ 
+ 			if (vcn_ofs || ((vol->cluster_size > iomap->length) &&
+-- 
+2.56.1
+
+
+From fab5d6d28c8c501e061d033cccbddc9eafdaca8d Mon Sep 17 00:00:00 2001
+From: Ernest Borowski <ernest.borowski.git@proton.me>
+Date: Sat, 14 Nov 2026 16:09:19 +0100
+Subject: [PATCH 4/5] ntfs: allocate delalloc clusters at writeback only for
+ dirty folios
+
+A buffered write into a hole maps its whole range as one delalloc run in
+->iomap_begin() and then copies the data folio by folio.  Writeback that
+runs meanwhile (the flusher, sync_file_range(), fadvise(DONTNEED),
+FIEMAP_FLAG_SYNC) asks ntfs_write_da_iomap_begin_non_resident() for a
+mapping from the first dirty folio to the end of the allocation, so
+ntfs_attr_map_cluster() allocates the whole run, also the clusters whose
+data has not been copied yet.  Readers that do not take the inode lock
+(page faults, splice()) then map those clusters, find no folio in the
+page cache, and read what the reused clusters held before, data of
+deleted files.  The stale folios stay in the page cache.
+
+Reproducer: fill the free space with a marker pattern and delete it,
+create a sparse file, and fill its holes with buffered writes of 1 to 8
+clusters while other processes call fadvise(DONTNEED) on the range being
+written and read it through new mappings and splice().  With 4 KiB
+clusters the marker shows up within seconds, with 64 KiB clusters too.
+
+Ask for a mapping only up to the end of the dirty folios that follow the
+one being written back.  Clusters larger than a page are allocated
+whole, so with those also stop before a cluster that is only partly
+dirty, and when the folio's own cluster has folios below
+initialized_size that are not dirty, zero it on disk before it is
+mapped, as for a write fault.  In the usual case every folio of a
+delalloc cluster is dirty, since the buffered write zeroes the parts of
+its edge clusters it does not cover, so that zeroing only happens while
+a copy into the cluster is still going on.  The scan for dirty folios
+runs for every new mapping, so it stops at the end of the run being
+mapped and after 16 MiB: scanning to the end of the allocation made
+fsync of a fully dirty 1 GiB file of 4000 extents take 98 to 172 s
+instead of 0.36 to 0.63 s; with the bound it takes 0.29 to 0.57 s (QEMU,
+RAM-backed loop device, 3 runs each).
+
+Fixes: b041ca562526 ("ntfs: update iomap and address space operations")
+Cc: stable@vger.kernel.org
+---
+ fs/ntfs/iomap.c | 125 +++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 119 insertions(+), 6 deletions(-)
+
+diff --git a/fs/ntfs/iomap.c b/fs/ntfs/iomap.c
+index b7142d633f..17e27a15e0 100644
+--- a/fs/ntfs/iomap.c
++++ b/fs/ntfs/iomap.c
+@@ -5,6 +5,7 @@
+  * Copyright (c) 2025 LG Electronics Co., Ltd.
+  */
+ 
++#include <linux/sizes.h>
+ #include <linux/workqueue.h>
+ #include <linux/writeback.h>
+ 
+@@ -596,6 +597,8 @@ static int ntfs_write_simple_iomap_begin_non_resident(struct inode *inode, loff_
+ #define NTFS_IOMAP_FLAGS_DIO		BIT(2)
+ #define	NTFS_IOMAP_FLAGS_MKWRITE	BIT(3)
+ #define	NTFS_IOMAP_FLAGS_WRITEBACK	BIT(4)
++/* Zero the clusters ->iomap_begin() allocates before mapping them. */
++#define	NTFS_IOMAP_FLAGS_ZERO_NEW	BIT(5)
+ 
+ static int ntfs_write_da_iomap_begin_non_resident(struct inode *inode,
+ 		loff_t offset, loff_t length, unsigned int flags,
+@@ -622,8 +625,9 @@ static int ntfs_write_da_iomap_begin_non_resident(struct inode *inode,
+ 	 * of a cluster that the folio does not cover has to be zeroed on disk
+ 	 * before other readers can map the cluster.
+ 	 */
+-	zero_new = ntfs_iomap_flags & NTFS_IOMAP_FLAGS_MKWRITE &&
+-		   (offset | length) & vol->cluster_size_mask;
++	zero_new = (ntfs_iomap_flags & NTFS_IOMAP_FLAGS_MKWRITE &&
++		    (offset | length) & vol->cluster_size_mask) ||
++		   ntfs_iomap_flags & NTFS_IOMAP_FLAGS_ZERO_NEW;
+ 	down_write(&ni->runlist.lock);
+ 	err = ntfs_attr_map_cluster(ni, vcn, &start_lcn, &lcn_count,
+ 			max_clu_count, &balloc, update_mp,
+@@ -1037,17 +1041,126 @@ static int ntfs_dio_iomap_begin(struct inode *inode, loff_t offset,
+ DEFINE_IOMAP_ITER_NEXT_END(ntfs_dio_iomap_next, ntfs_dio_iomap_begin,
+ 		ntfs_write_iomap_end);
+ 
++/*
++ * Longest mapping writeback asks for at a time.  With the end of the run
++ * (ntfs_writeback_run_end()) it bounds the scan of ntfs_dirty_range_end(),
++ * which runs for every new mapping: unbounded, a fully dirty file of many
++ * extents is scanned once per extent.  It is the largest cluster size
++ * (4096 sectors of 4 KiB), so a mapping can always cover a whole cluster.
++ */
++#define NTFS_WRITEBACK_MAP_MAX		SZ_16M
++
++/*
++ * Return where the run holding @offset ends, at most @end: no mapping goes
++ * past it, so neither needs the scan for dirty folios.  Set @delalloc when
++ * the run is a delalloc one, which the mapping will allocate.
++ */
++static loff_t ntfs_writeback_run_end(struct inode *inode, loff_t offset,
++				     loff_t end, bool *delalloc)
++{
++	struct ntfs_inode *ni = NTFS_I(inode);
++	struct ntfs_volume *vol = ni->vol;
++	struct runlist_element *rl;
++
++	*delalloc = false;
++	down_read(&ni->runlist.lock);
++	rl = __ntfs_attr_find_vcn_nolock(&ni->runlist,
++					 ntfs_bytes_to_cluster(vol, offset));
++	if (!IS_ERR(rl) && rl->length) {
++		end = min_t(loff_t, end,
++			    ntfs_cluster_to_bytes(vol, rl->vcn + rl->length));
++		*delalloc = rl->lcn == LCN_DELALLOC;
++	}
++	up_read(&ni->runlist.lock);
++	return end;
++}
++
++/*
++ * Return where the run of dirty folios that follows @folio ends, at most
++ * @end.  A buffered write maps its whole range as delalloc before it copies
++ * the data folio by folio, so writeback that runs meanwhile must not allocate
++ * the clusters past the dirty folios: readers that do not take the inode
++ * lock (page faults, splice) would map the new clusters and read what they
++ * held before.
++ */
++static loff_t ntfs_dirty_range_end(struct address_space *mapping,
++				   struct folio *folio, loff_t end)
++{
++	pgoff_t index = folio_next_index(folio);
++	pgoff_t last = DIV_ROUND_UP(end, PAGE_SIZE);
++
++	while (index < last &&
++	       xa_get_mark(&mapping->i_pages, index, PAGECACHE_TAG_DIRTY))
++		index++;
++	return min_t(loff_t, (loff_t)index << PAGE_SHIFT, end);
++}
++
++/*
++ * With clusters larger than a page, a cluster can be only partly dirty while
++ * a buffered write is still copying into it.  Return where the mapping for
++ * the folio at @offset should end so that writeback does not allocate a
++ * partly dirty cluster other than the folio's own, and set @zero when the
++ * folio's own cluster has folios below initialized_size that are not dirty:
++ * it then has to be zeroed on disk before it is mapped.
++ */
++static loff_t ntfs_writeback_cluster_end(struct inode *inode,
++					 struct folio *folio, loff_t offset,
++					 loff_t end, bool *zero)
++{
++	struct ntfs_inode *ni = NTFS_I(inode);
++	u32 cs = ni->vol->cluster_size;
++	loff_t cstart = round_down(offset, cs);
++	loff_t cend = cstart + cs;
++	loff_t init = round_up(ni->initialized_size, PAGE_SIZE);
++	pgoff_t index;
++
++	*zero = false;
++	if (cs <= PAGE_SIZE)
++		return end;
++	if (end < min(cend, init))
++		*zero = true;
++	for (index = cstart >> PAGE_SHIFT; !*zero && index < folio->index &&
++	     ((loff_t)index << PAGE_SHIFT) < init; index++)
++		if (!xa_get_mark(&inode->i_mapping->i_pages, index,
++				 PAGECACHE_TAG_DIRTY))
++			*zero = true;
++	if (*zero || end < cend)
++		return min(end, cend);
++	return round_down(end, cs);
++}
++
+ static ssize_t ntfs_writeback_range(struct iomap_writepage_ctx *wpc,
+ 		struct folio *folio, u64 offset, unsigned int len, u64 end_pos)
+ {
+ 	if (offset < wpc->iomap.offset ||
+ 	    offset >= wpc->iomap.offset + wpc->iomap.length) {
++		struct inode *inode = wpc->inode;
++		loff_t end = min_t(loff_t, NTFS_I(inode)->allocated_size,
++				   offset + NTFS_WRITEBACK_MAP_MAX);
++		int ntfs_iomap_flags = NTFS_IOMAP_FLAGS_WRITEBACK;
++		bool delalloc, zero;
+ 		int error;
+ 
+-		error = __ntfs_write_iomap_begin(wpc->inode, offset,
+-				NTFS_I(wpc->inode)->allocated_size - offset,
+-				IOMAP_WRITE, &wpc->iomap,
+-				NTFS_IOMAP_FLAGS_WRITEBACK);
++		end = ntfs_writeback_run_end(inode, offset, end, &delalloc);
++		/*
++		 * With clusters smaller than a folio, the clean blocks of a
++		 * dirty folio can be delalloc clusters that a buffered write
++		 * has not copied into yet, and so can those of the dirty folios
++		 * that follow.  Allocate only the dirty blocks iomap passes in.
++		 */
++		if (delalloc &&
++		    NTFS_I(inode)->vol->cluster_size < folio_size(folio))
++			end = min_t(loff_t, end, offset + len);
++		else
++			end = ntfs_dirty_range_end(inode->i_mapping, folio,
++						   end);
++		end = ntfs_writeback_cluster_end(inode, folio, offset, end,
++						 &zero);
++		if (zero)
++			ntfs_iomap_flags |= NTFS_IOMAP_FLAGS_ZERO_NEW;
++		error = __ntfs_write_iomap_begin(inode, offset, end - offset,
++						 IOMAP_WRITE, &wpc->iomap,
++						 ntfs_iomap_flags);
+ 		if (error)
+ 			return error;
+ 	}
+-- 
+2.56.1
+
+
+From ad9a5193c435695e91b3bfd3f8f90bb2c794b464 Mon Sep 17 00:00:00 2001
+From: Ernest Borowski <ernest.borowski.git@proton.me>
+Date: Sat, 14 Nov 2026 16:02:25 +0100
+Subject: [PATCH 5/5] ntfs: write through the page cache when direct I/O hits a
+ hole
+
+A direct I/O write into a hole allocates the clusters in
+ntfs_write_da_iomap_begin_non_resident(): ntfs_attr_map_cluster() puts
+the new cluster numbers into the runlist, and the data reaches them
+only when the bios complete.  Buffered reads that do not take the inode
+lock (page faults, splice()), and any read once an asynchronous write
+has dropped it, map the new clusters in that window and read what they
+held before, data of deleted files.  The partial clusters at the start
+and the end of the write are zeroed on disk only after the runlist
+shows them, which opens the same window for the parts the write does
+not cover; a reader can leave the old data in the page cache there.
+initialized_size covers the write before it is issued, so appending
+writes are affected as well.
+
+Reproducer: fill the free space of a volume with a marker pattern and
+delete it, create a sparse file, and fill its holes with O_DIRECT
+writes while other processes read the clusters being written through
+new mappings and splice() after dropping the page cache.  The marker
+shows up within the first two writes, with 4 KiB and with 64 KiB
+clusters.
+
+NTFS has no unwritten extents to hide the clusters until the data is
+there, so do what ext2 and gfs2 do: ->iomap_begin() returns -ENOTBLK
+for a hole instead of allocating, and ntfs_dio_write_iter() writes the
+rest of the request through the page cache with delayed allocation,
+then writes it back and invalidates the page cache as before.
+Overwrites of allocated clusters stay direct.  The only clusters direct
+I/O still allocates are those of a delalloc run whose folios are gone
+(writeback failed to allocate it); zero them on disk before the runlist
+shows them, like a write fault does, instead of zeroing only the partial
+clusters at the edges after they are mapped.
+
+Fixes: b041ca562526 ("ntfs: update iomap and address space operations")
+Cc: stable@vger.kernel.org
+---
+ fs/ntfs/iomap.c | 37 ++++++++++++++-----------------------
+ 1 file changed, 14 insertions(+), 23 deletions(-)
+
+diff --git a/fs/ntfs/iomap.c b/fs/ntfs/iomap.c
+index 17e27a15e0..0e1d01d071 100644
+--- a/fs/ntfs/iomap.c
++++ b/fs/ntfs/iomap.c
+@@ -628,14 +628,27 @@ static int ntfs_write_da_iomap_begin_non_resident(struct inode *inode,
+ 	zero_new = (ntfs_iomap_flags & NTFS_IOMAP_FLAGS_MKWRITE &&
+ 		    (offset | length) & vol->cluster_size_mask) ||
+ 		   ntfs_iomap_flags & NTFS_IOMAP_FLAGS_ZERO_NEW;
++	/*
++	 * Direct I/O does not fill holes: the new clusters would be in the
++	 * runlist, readable by buffered reads, page faults and splice(),
++	 * before the data reaches them.  ntfs_dio_write_iter() writes the
++	 * rest of the request through the page cache instead.  It can still
++	 * allocate a delalloc run whose folios are gone (writeback failed to
++	 * allocate it), so zero what it allocates before the runlist shows it.
++	 */
++	if (ntfs_iomap_flags & NTFS_IOMAP_FLAGS_DIO)
++		zero_new = true;
+ 	down_write(&ni->runlist.lock);
+ 	err = ntfs_attr_map_cluster(ni, vcn, &start_lcn, &lcn_count,
+ 			max_clu_count, &balloc, update_mp,
+-			ntfs_iomap_flags & NTFS_IOMAP_FLAGS_WRITEBACK, zero_new);
++			ntfs_iomap_flags & (NTFS_IOMAP_FLAGS_WRITEBACK |
++					    NTFS_IOMAP_FLAGS_DIO), zero_new);
+ 	up_write(&ni->runlist.lock);
+ 	mutex_unlock(&mrec_ni->mrec_lock);
+ 	if (err)
+ 		return err;
++	if (ntfs_iomap_flags & NTFS_IOMAP_FLAGS_DIO && start_lcn == LCN_HOLE)
++		return -ENOTBLK;
+ 
+ 	iomap->bdev = inode->i_sb->s_bdev;
+ 	iomap->offset = offset;
+@@ -655,28 +668,6 @@ static int ntfs_write_da_iomap_begin_non_resident(struct inode *inode,
+ 
+ 	iomap->addr = ntfs_cluster_to_bytes(vol, start_lcn) + vcn_ofs;
+ 
+-	if (balloc == true) {
+-		if (flags & IOMAP_DIRECT) {
+-			loff_t end = offset + length;
+-
+-			if (vcn_ofs || ((vol->cluster_size > iomap->length) &&
+-					end < ni->initialized_size))
+-				err = ntfs_dio_zero_range(inode,
+-							  start_lcn <<
+-							  vol->cluster_size_bits,
+-							  vol->cluster_size);
+-			if (!err && lcn_count > 1 &&
+-			    (iomap->length & vol->cluster_size_mask &&
+-			     end < ni->initialized_size))
+-				err = ntfs_dio_zero_range(inode,
+-							  (start_lcn + lcn_count - 1) <<
+-							  vol->cluster_size_bits,
+-							  vol->cluster_size);
+-		}
+-		if (err < 0)
+-			return err;
+-	}
+-
+ 	if (ntfs_iomap_flags & NTFS_IOMAP_FLAGS_MKWRITE &&
+ 	    iomap->offset + iomap->length > ni->initialized_size) {
+ 		err = ntfs_attr_set_initialized_size(ni,
+-- 
+2.56.1
+
