@@ -1,4 +1,4 @@
-From 92f4b61274582770fbc27003bbb3a038fbbf3fd2 Mon Sep 17 00:00:00 2001
+From c58683afc028f8e984db1aaeccce4a9990aa55dc Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:31 +0100
 Subject: [PATCH 4/4] generic: test a short copy into a hole of reused blocks
@@ -35,7 +35,7 @@ Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
 
 diff --git a/tests/generic/818 b/tests/generic/818
 new file mode 100755
-index 00000000..048366ba
+index 00000000..6211c901
 --- /dev/null
 +++ b/tests/generic/818
 @@ -0,0 +1,114 @@
@@ -97,15 +97,15 @@ index 00000000..048366ba
 +	echo "$out" >> "$seqres.full"
 +	# A write that runs out of space part way comes back short, and xfs_io
 +	# then stops without an error message; a write with no space left
-+	# fails with ENOSPC.
++	# fails with ENOSPC, and so may creating the file after a full pass.
 +	# shellcheck disable=SC2016 # $2 is the awk field, not a shell variable
-+	if ! echo "$out" | grep -q '^pwrite: No space left on device$' &&
++	if ! echo "$out" | grep -q -E "^(pwrite|$2): No space left on device\$" &&
 +	   ! echo "$out" | $AWK_PROG '/^wrote [0-9]+\/[0-9]+ bytes/ {
 +			split($2, n, "/"); if (n[1] + 0 < n[2] + 0) short = 1 }
 +			END { exit !short }'; then
 +		_fail "writes of $1 bytes to $2 did not run out of space"
 +	fi
-+	if echo "$out" | grep '^pwrite: ' | grep -q -v 'No space left on device'; then
++	if echo "$out" | grep -E "^(pwrite|$2): " | grep -q -v 'No space left on device'; then
 +		_fail "writes of $1 bytes to $2 failed, see $seqres.full"
 +	fi
 +	_scratch_sync || _fail "syncfs after writes of $1 bytes failed"
