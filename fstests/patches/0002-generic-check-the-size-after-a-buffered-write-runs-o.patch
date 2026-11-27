@@ -1,4 +1,4 @@
-From 7969d94d53bd19dd6d79c878a46c5cad4c730584 Mon Sep 17 00:00:00 2001
+From b05f060cfb542d70fd3438f72d2e631fa7a957c1 Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 2/4] generic: check the size after a buffered write runs out
@@ -21,6 +21,7 @@ write that fails with ENOSPC before storing anything is checked the same
 way but then reported as not run. generic/275 also runs a filesystem out of
 space with writes, but only checks that some data was written.
 
+Reviewed-by: Baolin Liu <liubaolin@kylinos.cn>
 Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
 ---
  tests/generic/816     | 91 +++++++++++++++++++++++++++++++++++++++++++

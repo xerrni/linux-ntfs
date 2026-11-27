@@ -1,4 +1,4 @@
-From dc145b04f348246992f931a77a0e108c01be22bb Mon Sep 17 00:00:00 2001
+From a9ad7e0ec8012b592d3f34bc312ddc5fd66e0941 Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 1/4] common: add support for the ntfs driver
@@ -21,6 +21,7 @@ is ntfs, so that every mount and remount uses the kernel driver and never
 a mount.ntfs helper, whatever the mount options are.
 The check keeps the generic "fsck -t ntfs -n" path, which runs ntfsck.
 
+Reviewed-by: Baolin Liu <liubaolin@kylinos.cn>
 Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
 ---
  common/config |  9 +++++++++

@@ -1,4 +1,4 @@
-From cf0d58fa547ed3af699f4485f164353438f296dc Mon Sep 17 00:00:00 2001
+From 92f4b61274582770fbc27003bbb3a038fbbf3fd2 Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:31 +0100
 Subject: [PATCH 4/4] generic: test a short copy into a hole of reused blocks
@@ -18,27 +18,27 @@ write its last byte, write two and a half blocks into the hole from a
 buffer whose readable part ends in the first, second or third block, and
 compare the file with the expected contents after a remount. The write
 has to return a count between one and the readable length. Each fill
-pass has to end in ENOSPC and fail in no other way, and each sync has to
-succeed, or some blocks may never have held data. The test does not run
-when the scratch filesystem is mounted with online discard, which may
-zero the freed blocks; it reads the options in effect, as some
+pass has to run out of space and fail in no other way, and each sync has
+to succeed, or some blocks may never have held data. The test does not
+run when the scratch filesystem is mounted with online discard, which
+may zero the freed blocks; it reads the options in effect, as some
 filesystems turn discard on by default.
 
 Link: https://lore.kernel.org/all/20261124-b4-ntfs-delalloc-fixes-v2-0-f394c800ec03@proton.me/
 Signed-off-by: Ernest Borowski <ernest.borowski.git@proton.me>
 ---
- tests/generic/818     | 106 ++++++++++++++++++++++++++++++++++++++++++
+ tests/generic/818     | 114 ++++++++++++++++++++++++++++++++++++++++++
  tests/generic/818.out |   2 +
- 2 files changed, 108 insertions(+)
+ 2 files changed, 116 insertions(+)
  create mode 100755 tests/generic/818
  create mode 100644 tests/generic/818.out
 
 diff --git a/tests/generic/818 b/tests/generic/818
 new file mode 100755
-index 00000000..bc8c55a8
+index 00000000..048366ba
 --- /dev/null
 +++ b/tests/generic/818
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,114 @@
 +#! /bin/bash
 +# SPDX-License-Identifier: GPL-2.0
 +# Copyright (c) 2026 Ernest Borowski <ernest.borowski.git@proton.me>.  All Rights Reserved.
@@ -86,17 +86,25 @@ index 00000000..bc8c55a8
 +len=$((2 * blksz + blksz / 2))
 +file=$SCRATCH_MNT/file
 +
-+# Write file $2 with writes of $1 bytes until ENOSPC.  A pass that fails in
-+# another way, or that does not fill the filesystem, would leave blocks that
-+# never held data, and the test would then prove nothing.
++# Write file $2 with writes of $1 bytes until the filesystem is full.  A pass
++# that fails in another way, or that does not fill the filesystem, would leave
++# blocks that never held data, and the test would then prove nothing.
 +fill_pass()
 +{
 +	local out
 +
 +	out=$($XFS_IO_PROG -f -c "pwrite -S 0xcd -b $1 0 512m" "$2" 2>&1)
 +	echo "$out" >> "$seqres.full"
-+	echo "$out" | grep -q '^pwrite: No space left on device$' || \
-+		_fail "writes of $1 bytes to $2 did not end in ENOSPC"
++	# A write that runs out of space part way comes back short, and xfs_io
++	# then stops without an error message; a write with no space left
++	# fails with ENOSPC.
++	# shellcheck disable=SC2016 # $2 is the awk field, not a shell variable
++	if ! echo "$out" | grep -q '^pwrite: No space left on device$' &&
++	   ! echo "$out" | $AWK_PROG '/^wrote [0-9]+\/[0-9]+ bytes/ {
++			split($2, n, "/"); if (n[1] + 0 < n[2] + 0) short = 1 }
++			END { exit !short }'; then
++		_fail "writes of $1 bytes to $2 did not run out of space"
++	fi
 +	if echo "$out" | grep '^pwrite: ' | grep -q -v 'No space left on device'; then
 +		_fail "writes of $1 bytes to $2 failed, see $seqres.full"
 +	fi
