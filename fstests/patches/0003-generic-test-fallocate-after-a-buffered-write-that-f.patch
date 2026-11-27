@@ -1,4 +1,4 @@
-From e6195d03b29abeb00589884319407a320bb0c124 Mon Sep 17 00:00:00 2001
+From 7dcf22b7edd75b7d123ea120b648738f89669331 Mon Sep 17 00:00:00 2001
 From: Ernest Borowski <ernest.borowski.git@proton.me>
 Date: Wed, 25 Nov 2026 00:13:30 +0100
 Subject: [PATCH 3/4] generic: test fallocate after a buffered write that
